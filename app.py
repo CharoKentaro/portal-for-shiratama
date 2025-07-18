@@ -10,7 +10,7 @@ import random
 import time
 
 # --- ① アプリの基本設定 ---
-st.set_page_config(page_title="シラタマさん専用AIアシスタント", page_icon="⚔️", layout="wide")
+st.set_page_config(page_title="白玉さん専用AIアシスタント", page_icon="⚔️", layout="wide")
 
 # --- ② 認証情報 (Secretsから、サービスアカウント情報を、読み込む) ---
 try:
@@ -78,7 +78,7 @@ def save_api_key(api_key):
 
 def run_shiratama_custom(gemini_api_key):
     try:
-        st.header("⚔️ シラタマさん専用AIアシスタント")
+        st.header("✨ 白玉さん専用AIアシスタント")
                
         st.info("処理したいスクリーンショット画像を、すべて、ここにアップロードしてください。")
         uploaded_files = st.file_uploader("スクリーンショットを選択", accept_multiple_files=True, type=['png', 'jpg', 'jpeg'])
