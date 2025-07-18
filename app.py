@@ -43,7 +43,7 @@ def run_shiratama_custom(gemini_api_key):
             if not gemini_api_key: st.warning("サイドバーでGemini APIキーを入力し、保存してください。"); st.stop()
             
             gc = gspread.authorize(creds)
-            spreadsheet = gc.open_by_key('1j-A8Hq5sc4_y0E07wNd9814mHmheNAnaU8iZAr3C6xo')
+            spreadsheet = gc.open_by_key('1EOJp_J3yPi9Yp6WqabJ_pdJUeIkGKCN9d-xae5Mf7PY')
             sheet = spreadsheet.worksheet('遠征入力')
             member_sheet = spreadsheet.worksheet('メンバー')
             
