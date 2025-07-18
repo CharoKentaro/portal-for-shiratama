@@ -11,7 +11,7 @@ import time
 from streamlit_local_storage import LocalStorage
 
 # --- ① アプリの基本設定 ---
-st.set_page_config(page_title="シラタマさん専用AIアシスタント", page_icon="⚔️", layout="wide")
+st.set_page_config(page_title="白玉さん専用AIアシスタント", page_icon="⚔️", layout="wide")
 
 # --- ② 認証情報 (Secretsから、サービスアカウント情報を、読み込む) ---
 try:
@@ -160,8 +160,8 @@ def run_shiratama_custom(gemini_api_key):
 
 # --- ⑤ サイドバーと、APIキー入力 ---
 with st.sidebar:
-    st.title("⚔️ シラタマさん専用")
-    st.info("このツールは、シラタマさんの特定の業務を自動化するために、特別に設計されています。")
+    st.title("⚔️ 白玉さん専用")
+    st.info("このツールは、特定の業務を自動化するために、特別に設計されています。")
     st.divider()
     
     saved_key = localS.getItem("gemini_api_key")
@@ -171,7 +171,7 @@ with st.sidebar:
         "Gemini APIキー", 
         type="password", 
         value=default_value,
-        help="シラタマさんの、個人のGemini APIキー"
+        help="白玉さんの、個人のGemini APIキー"
     )
     
     if st.button("このAPIキーをブラウザに記憶させる"):
