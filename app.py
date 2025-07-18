@@ -23,28 +23,26 @@ except (KeyError, FileNotFoundError, IndexError):
     st.error("🚨 重大なエラー：StreamlitのSecretsに、GoogleのOAuth情報が正しく設定されていません。")
     st.stop()
 
-# --- ③ Streamlit Authenticator の設定 ---
+# --- ③ Streamlit Authenticator の設定 (最新版) ---
 try:
-    # ★★★ ここが、最後の、そして、本当の、バグ修正箇所 ★★★
-    # Secretsから、直接、辞書として、設定を、読み込む！
     config = {
         'credentials': st.secrets['credentials'],
         'cookie': st.secrets['cookie'],
-        'preauthorized': {'emails': []} # preauthorizedは、空でも、必須
     }
     
+    # ★★★ ここが、最後の、そして、最新の、バグ修正箇所 ★★★
+    # 新しいバージョンでは、preauthorizedは不要になりました！
     authenticator = stauth.Authenticate(
         config['credentials'],
         config['cookie']['name'],
         config['cookie']['key'],
         config['cookie']['expiry_days'],
-        config['preauthorized']
     )
 except (KeyError, FileNotFoundError):
     st.error("🚨 重大なエラー：StreamlitのSecretsに、Authenticatorの設定がありません。")
     st.stop()
 
-
+# (これ以降のコードは、一切、変更ありません)
 # Google OAuthのためのURLを生成
 auth_url = authenticator.get_authorization_url(
     provider='google',
@@ -138,28 +136,16 @@ def run_shiratama_custom(creds, gemini_api_key):
         st.error(f"❌ ミッションの途中で予期せぬエラーが発生しました: {e}")
 
 # --- ⑤ ログイン処理と、アプリの実行 ---
-# Cookieからログイン情報を取得しようと試みる
 authenticator.login()
 
 if st.session_state["authentication_status"]:
-    # ログイン成功
     with st.sidebar:
         st.write(f'ようこそ、 *{st.session_state["name"]}* さん')
         authenticator.logout('ログアウト', key='logout_button')
-    
-    # ★★★ ログインしたユーザーの、特別な「許可証」を取得 ★★★
     token = st.session_state['credentials']['google']
-    credentials = Credentials(token=token['access_token'],
-                              refresh_token=token.get('refresh_token'),
-                              token_uri=token['token_uri'],
-                              client_id=google_client_id,
-                              client_secret=google_client_secret,
-                              scopes=token['scopes'])
-    
-    # Gemini APIキーは、ログイン後に、都度、入力してもらう
+    credentials = Credentials(token=token['access_token'], refresh_token=token.get('refresh_token'), token_uri=token['token_uri'], client_id=google_client_id, client_secret=google_client_secret, scopes=token['scopes'])
     with st.sidebar:
         gemini_api_key = st.text_input("Gemini APIキーを入力してください", type="password", key="gemini_key_input")
-    
     run_shiratama_custom(credentials, gemini_api_key)
 
 elif st.session_state["authentication_status"] is False:
@@ -171,23 +157,14 @@ elif st.session_state["authentication_status"] is None:
     st.info("このAIアシスタントを使うには、初回のみ、Googleアカウントとの連携が必要です。")
     st.link_button("Googleアカウントでログイン", auth_url)
 
-# URLのクエリパラメータに認証コードがあれば、トークン取得を試みる
 try:
     if 'code' in st.query_params:
         auth_code = st.query_params['code']
-        token = authenticator.get_token(provider='google', 
-                                        client_id=google_client_id, 
-                                        client_secret=google_client_secret, 
-                                        redirect_uri=google_redirect_uri, 
-                                        code=auth_code)
-        
+        token = authenticator.get_token(provider='google', client_id=google_client_id, client_secret=google_client_secret, redirect_uri=google_redirect_uri, code=auth_code)
         st.session_state['credentials'] = {'google': token}
         user_info = authenticator.get_user_info(provider='google', token=token)
         st.session_state["name"] = user_info.get('name', 'User')
-        
-        # ログイン情報をAuthenticatorに登録し、Cookieに書き込む
         authenticator.login(st.session_state["name"], 'google_login')
-        
         st.query_params.clear()
         st.rerun()
 except Exception as e:
