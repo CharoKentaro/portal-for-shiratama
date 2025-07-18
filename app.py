@@ -188,7 +188,7 @@ def run_shiratama_custom(gemini_api_key):
 # --- サイドバー ---
 with st.sidebar:
     st.title("⚔️ シラタマさん専用")
-    st.info("このツールは、シラタマさんの特定の業務を自動化するために、特別に設計されています。")
+    st.info("このツールは、特定の業務を自動化するために、特別に設計されています。")
     st.divider()
     
     # APIキーの取得と入力
