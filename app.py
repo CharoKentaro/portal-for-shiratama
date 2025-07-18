@@ -8,24 +8,13 @@ import io
 from thefuzz import process
 import random
 import time
-from streamlit_local_storage import LocalStorage
 
 # --- ① アプリの基本設定 ---
 st.set_page_config(page_title="シラタマさん専用AIアシスタント", page_icon="⚔️", layout="wide")
 
 # --- ② 認証情報 (Secretsから、サービスアカウント情報を、読み込む) ---
 try:
-    # ★★★ ここが、最後の、そして、本当の、究極の、バグ修正箇所 ★★★
-    # 1. まず、神聖な、金庫（st.secrets）から、データを、そのまま、取り出す
-    secrets_creds = st.secrets["gcp_service_account"]
-    
-    # 2. 別の、普通の、宝箱に、中身を、コピーする
-    creds_dict = dict(secrets_creds)
-    
-    # 3. 普通の、宝箱の、中身を、加工する
-    creds_dict["private_key"] = creds_dict["private_key"].replace('\\n', '\n')
-    
-    # 4. 加工済みの、宝箱を使って、認証を行う
+    creds_dict = st.secrets["gcp_service_account"]
     creds = service_account.Credentials.from_service_account_info(
         creds_dict,
         scopes=['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
@@ -34,9 +23,7 @@ except (KeyError, FileNotFoundError):
     st.error("🚨 重大なエラー：StreamlitのSecretsに、GCPのサービスアカウント情報が正しく設定されていません。")
     st.stop()
 
-# --- (これ以降のコードは、前回と、全く、同じです) ---
-localS = LocalStorage()
-
+# --- ③ メインの処理を実行する関数 ---
 def run_shiratama_custom(gemini_api_key):
     try:
         st.header("⚔️ シラタマさん専用AIアシスタント")
@@ -44,11 +31,13 @@ def run_shiratama_custom(gemini_api_key):
         uploaded_files = st.file_uploader("スクリーンショットを選択", accept_multiple_files=True, type=['png', 'jpg', 'jpeg'])
         if st.button("アップロードした画像のデータ抽出を実行する"):
             if not uploaded_files: st.warning("画像がアップロードされていません。"); st.stop()
-            if not gemini_api_key: st.warning("サイドバーでGemini APIキーを入力し、保存してください。"); st.stop()
+            if not gemini_api_key: st.warning("サイドバーでGemini APIキーを入力してください。"); st.stop()
+            
             gc = gspread.authorize(creds)
             spreadsheet = gc.open_by_key('1j-A8Hq5sc4_y0E07wNd9814mHmheNAnaU8iZAr3C6xo')
             sheet = spreadsheet.worksheet('遠征入力')
             member_sheet = spreadsheet.worksheet('メンバー')
+            
             genai.configure(api_key=gemini_api_key)
             gemini_model = genai.GenerativeModel('gemini-1.5-flash-latest')
             gemini_prompt = """
@@ -117,15 +106,26 @@ def run_shiratama_custom(gemini_api_key):
     except Exception as e:
         st.error(f"❌ ミッションの途中で予期せぬエラーが発生しました: {e}")
 
+# --- ④ サイドバーと、アプリの実行 ---
 with st.sidebar:
     st.title("⚔️ シラタマさん専用")
     st.info("このツールは、シラタマさんの特定の業務を自動化するために、特別に設計されています。")
     st.divider()
-    saved_key = localS.getItem("gemini_api_key")
-    default_value = saved_key['value'] if isinstance(saved_key, dict) and 'value' in saved_key else ""
-    gemini_api_key_input = st.text_input("Gemini APIキー", type="password", value=default_value, help="シラタマさんの、個人のGemini APIキー")
-    if st.button("このAPIキーをブラウザに記憶させる"):
-        localS.setItem("gemini_api_key", gemini_api_key_input)
-        st.success("キーを記憶しました！")
+    
+    # ★★★ あなたの、天才的な、アイデアを、実装 ★★★
+    # APIキーを、セッションステートで、管理する
+    if "gemini_api_key" not in st.session_state:
+        st.session_state.gemini_api_key = ""
 
-run_shiratama_custom(gemini_api_key_input)
+    gemini_api_key_input = st.text_input(
+        "Gemini APIキー", 
+        type="password", 
+        value=st.session_state.gemini_api_key,
+        help="シラタマさんの、個人のGemini APIキー"
+    )
+    
+    # 入力されたキーを、セッションステートに、即座に、反映する
+    st.session_state.gemini_api_key = gemini_api_key_input
+
+# メインの処理を、セッションステートに、保存された、キーを使って、実行
+run_shiratama_custom(st.session_state.gemini_api_key)
