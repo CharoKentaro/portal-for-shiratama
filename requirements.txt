@@ -6,3 +6,4 @@ python-Levenshtein
 gspread
 google-auth-oauthlib
 google-api-python-client
+streamlit-local-storage
