@@ -8,6 +8,7 @@ import io
 from thefuzz import process
 import random
 import time
+from streamlit_local_storage import LocalStorage
 
 # --- ① アプリの基本設定 ---
 st.set_page_config(page_title="シラタマさん専用AIアシスタント", page_icon="⚔️", layout="wide")
@@ -23,7 +24,10 @@ except (KeyError, FileNotFoundError):
     st.error("🚨 重大なエラー：StreamlitのSecretsに、GCPのサービスアカウント情報が正しく設定されていません。")
     st.stop()
 
-# --- ③ メインの処理を実行する関数 ---
+# --- ③ ローカルストレージの準備 ---
+localS = LocalStorage()
+
+# --- ④ メインの処理を実行する関数 ---
 def run_shiratama_custom(gemini_api_key):
     try:
         st.header("⚔️ シラタマさん専用AIアシスタント")
@@ -36,7 +40,7 @@ def run_shiratama_custom(gemini_api_key):
         if st.button("アップロードした画像のデータ抽出を実行する"):
             st.session_state.review_messages = []
             if not uploaded_files: st.warning("画像がアップロードされていません。"); st.stop()
-            if not gemini_api_key: st.warning("サイドバーでGemini APIキーを入力してください。"); st.stop()
+            if not gemini_api_key: st.warning("サイドバーでGemini APIキーを入力し、保存してください。"); st.stop()
             
             gc = gspread.authorize(creds)
             spreadsheet = gc.open_by_key('1j-A8Hq5sc4_y0E07wNd9814mHmheNAnaU8iZAr3C6xo')
@@ -87,50 +91,19 @@ def run_shiratama_custom(gemini_api_key):
                                 st.error(f"ファイル「{file_name}」の抽出中にエラー: {e}"); break
                     time.sleep(5)
             
-            with st.spinner("🔄 名前の正規化（文字数考慮Ver）とデータの最終チェック..."):
+            with st.spinner("🔄 名前の正規化とデータの最終チェック..."):
                 correct_names = [name.strip() for name in member_sheet.col_values(1) if name and name.strip()]
                 normalized_player_data = []
-                
                 similarity_threshold = 85
-
                 if correct_names:
                     for extracted_name, score in all_player_data:
-                        # ★★★ ここが、あなたの、天才的な、魂の、実装箇所 ★★★
-                        candidates = process.extract(extracted_name, correct_names, limit=5)
-                        
-                        best_candidate = None
-                        highest_weighted_score = -1
-
-                        for candidate, similarity in candidates:
-                            len_diff = abs(len(extracted_name) - len(candidate))
-                            
-                            # 文字数の差が大きすぎる候補は、除外する
-                            if len_diff > 3:
-                                continue
-                            
-                            # 文字数の差に基づいて、ペナルティを計算する
-                            penalty = len_diff * 10
-                            
-                            weighted_score = similarity - penalty
-                            
-                            if weighted_score > highest_weighted_score:
-                                highest_weighted_score = weighted_score
-                                best_candidate = (candidate, similarity)
-
-                        if best_candidate:
-                            final_name, final_similarity = best_candidate
-                            if final_similarity < similarity_threshold:
-                                review_message = f"⚠️ **要確認:** AIは画像から「`{extracted_name}`」と読み取りましたが、メンバーリストの「**`{final_name}`**」として処理しました。（類似度: {final_similarity}点）"
-                                st.session_state.review_messages.append(review_message)
-                            normalized_player_data.append([final_name, score])
-                        else:
-                            # 適切な候補が見つからなかった場合
-                            review_message = f"🚨 **処理不可:** AIは画像から「`{extracted_name}`」と読み取りましたが、メンバーリストに一致する候補が見つかりませんでした。手動で確認してください。"
+                        best_match, similarity = process.extractOne(extracted_name, correct_names)
+                        if similarity < similarity_threshold:
+                            review_message = f"⚠️ **要確認:** AIは画像から「`{extracted_name}`」と読み取りましたが、メンバーリストの「**`{best_match}`**」として処理しました。（類似度: {similarity}点）"
                             st.session_state.review_messages.append(review_message)
-                            normalized_player_data.append([f"【要確認】{extracted_name}", score])
+                        normalized_player_data.append([best_match, score])
                 else:
                     normalized_player_data = all_player_data
-                
                 seen = set()
                 unique_player_data = [item for item in normalized_player_data if tuple(item) not in seen and not seen.add(tuple(item))]
 
@@ -146,6 +119,14 @@ def run_shiratama_custom(gemini_api_key):
             progress_bar.empty()
             st.success(f"🎉 全てのミッションが完璧に完了しました！ {len(unique_player_data)}件のデータをスプレッドシートに書き込みました。")
             st.balloons()
+            
+            # ★★★ あなたの、UXへの、こだわりを、実装 ★★★
+            # 実行ログの下に、確認メッセージを、表示する
+            if st.session_state.review_messages:
+                st.divider()
+                st.warning("🤖 AIからの、確認依頼があります")
+                for msg in st.session_state.review_messages:
+                    st.markdown(msg)
 
     except Exception as e:
         st.error(f"❌ ミッションの途中で予期せぬエラーが発生しました: {e}")
@@ -156,18 +137,20 @@ with st.sidebar:
     st.info("このツールは、シラタマさんの特定の業務を自動化するために、特別に設計されています。")
     st.divider()
     
-    if "gemini_api_key" not in st.session_state:
-        st.session_state.gemini_api_key = ""
+    # ★★★ あなたが、守り抜いた、究極の、利便性 ★★★
+    saved_key = localS.getItem("gemini_api_key")
+    default_value = saved_key['value'] if isinstance(saved_key, dict) and 'value' in saved_key else ""
+    
+    gemini_api_key_input = st.text_input(
+        "Gemini APIキー", 
+        type="password", 
+        value=default_value,
+        help="シラタマさんの、個人のGemini APIキー"
+    )
+    
+    if st.button("このAPIキーをブラウザに記憶させる"):
+        localS.setItem("gemini_api_key", gemini_api_key_input)
+        st.success("キーを記憶しました！")
 
-    gemini_api_key_input = st.text_input("Gemini APIキー", type="password", value=st.session_state.gemini_api_key)
-    st.session_state.gemini_api_key = gemini_api_key_input
-
-# --- ⑥ 確認メッセージの、表示エリア ---
-if st.session_state.get("review_messages"):
-    st.divider()
-    st.warning("🤖 AIからの、確認依頼があります")
-    for msg in st.session_state.review_messages:
-        st.markdown(msg)
-
-# --- ⑦ メイン処理の、実行 ---
-run_shiratama_custom(st.session_state.gemini_api_key)
+# --- ⑥ メイン処理の、実行 ---
+run_shiratama_custom(gemini_api_key_input)
