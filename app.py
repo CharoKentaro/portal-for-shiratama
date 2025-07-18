@@ -9,59 +9,86 @@ import io
 from thefuzz import process
 import random
 import time
+import yaml # YAMLを扱うために追加
+from yaml.loader import SafeLoader # 安全なローダーを追加
 
 # --- ① アプリの基本設定 ---
 st.set_page_config(page_title="シラタマさん専用AIアシスタント", page_icon="⚔️", layout="wide")
 
 # --- ② Google認証情報 (Secretsから読み込む) ---
+# SecretsからGoogleの認証情報を直接取得
 try:
-    google_client_id = st.secrets["GOOGLE_CLIENT_ID"]
-    google_client_secret = st.secrets["GOOGLE_CLIENT_SECRET"]
-    # ★重要★ デプロイ後に、Google Cloud Consoleで設定した、アプリのURL
-    google_redirect_uri = st.secrets["GOOGLE_REDIRECT_URI"] 
-except (KeyError, FileNotFoundError):
-    st.error("🚨 重大なエラー：StreamlitのSecretsに、Google認証情報が設定されていません。")
+    google_creds = st.secrets["google_oauth"]
+    google_client_id = google_creds["client_id"]
+    google_client_secret = google_creds["client_secret"]
+    google_redirect_uri = google_creds["redirect_uris"][0]
+except (KeyError, FileNotFoundError, IndexError):
+    st.error("🚨 重大なエラー：StreamlitのSecretsに、GoogleのOAuth情報が正しく設定されていません。")
+    st.info("`[google_oauth]`セクションに`client_id`, `client_secret`, `redirect_uris`が必要です。")
     st.stop()
 
 # --- ③ Streamlit Authenticator の設定 ---
-authenticator = stauth.Authenticate(
-    dict(st.secrets['credentials']), # Cookieの署名キー (これもSecretsで管理)
-    'some_cookie_name',              # Cookie名
-    'some_signature_key',            # Cookieキー
-    30,                              # Cookieの有効期限（日）
-    []                               # preauthorized（今回は使わない）
-)
+# SecretsからAuthenticator用の設定を取得
+try:
+    auth_config_str = st.secrets["authenticator_config"]
+    # TOML形式の文字列を、Pythonの辞書に変換
+    import toml
+    config = toml.loads(auth_config_str)
+    
+    authenticator = stauth.Authenticate(
+        config['credentials'],
+        config['cookie']['name'],
+        config['cookie']['key'],
+        config['cookie']['expiry_days'],
+    )
+except (KeyError, FileNotFoundError):
+    st.error("🚨 重大なエラー：StreamlitのSecretsに、Authenticatorの設定がありません。")
+    st.info("`authenticator_config`セクションが必要です。")
+    st.stop()
+
 
 # Google OAuthのためのURLを生成
-auth_url = authenticator.get_authorization_url(provider='google', 
-                                              client_id=google_client_id, 
-                                              redirect_uri=google_redirect_uri,
-                                              scope=["https://www.googleapis.com/auth/spreadsheets", 
-                                                     "https://www.googleapis.com/auth/drive"])
+auth_url = authenticator.get_authorization_url(
+    provider='google',
+    client_id=google_client_id,
+    redirect_uri=google_redirect_uri,
+    scope=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+)
 
-# --- ④ メインの処理を実行する関数 (あなたの魂のコードを移植) ---
-def run_shiratama_custom(creds):
+# --- ④ メインの処理を実行する関数 ---
+def run_shiratama_custom(creds, gemini_api_key):
     try:
         st.header("⚔️ シラタマさん専用AIアシスタント")
         st.info("処理したいスクリーンショット画像を、すべて、ここにアップロードしてください。")
 
-        # ファイルアップローダー
         uploaded_files = st.file_uploader("スクリーンショットを選択", accept_multiple_files=True, type=['png', 'jpg', 'jpeg'])
 
         if st.button("アップロードした画像のデータ抽出を実行する"):
             if not uploaded_files:
-                st.warning("画像がアップロードされていません。")
-                st.stop()
-
-            # --- ここから、あなたのColabコードのロジックが、輝き始めます ---
-            drive_service = build('drive', 'v3', credentials=creds)
+                st.warning("画像がアップロードされていません。"); st.stop()
+            if not gemini_api_key:
+                st.warning("サイドバーでGemini APIキーを入力してください。"); st.stop()
+                
+            # ここからが、あなたの魂のコード
             gc = gspread.authorize(creds)
             spreadsheet = gc.open_by_key('1j-A8Hq5sc4_y0E07wNd9814mHmheNAnaU8iZAr3C6xo')
             sheet = spreadsheet.worksheet('遠征入力')
             member_sheet = spreadsheet.worksheet('メンバー')
             
+            genai.configure(api_key=gemini_api_key)
             gemini_model = genai.GenerativeModel('gemini-1.5-flash-latest')
-            gemini_prompt = """ (あなたの、あの、完璧なプロンプト) """ # (ここに、あなたのGeminiプロンプトをそのまま貼り付け)
+            gemini_prompt = """
+            あなたは、与えられたゲームのスクリーンショット画像を直接解析する、超高精度のデータ抽出AIです。
+            あなたの使命は、画像の中から「プレイヤー名」と「スコア」のペアだけを完璧に抽出し、指定された形式で出力することです。
+            #厳格なルール
+            1. 画像を直接、あなたの目で見て、文字を認識してください。
+            2. 認識した文字の中から、「プレイヤー名」と、その右側あるいは下の行にある「数値（スコア）」のペアのみを抽出対象とします。
+            3. 画像に含まれる「ギルド対戦」「ラウンド」「<」「>」「|S」「A」のような、UIテキスト、無関係な記号、ランクを示すアルファベットは、思考の過程から完全に除外してください。
+            4. プレイヤー名は、日本語、英語、数字が混在することがあります（例: `korosuke94`, `あーる 0113`）。これらも、一つの名前として正しく認識してください。
+            5. 最終的なアウトプットは、一行につき「名前,数値」の形式で、カンマ区切りで出力してください。
+            6. いかなる場合でも、ルールに記載された以外の説明、前置き、後書きは、絶対に出力しないでください。
+            このルールを完璧に理解し、最高の精度で、任務を遂行してください。
+            """
 
             all_player_data = []
             max_retries = 3
@@ -72,7 +99,7 @@ def run_shiratama_custom(creds):
                 progress_text = f"処理中: {i+1}/{len(uploaded_files)} - {file_name}"
                 progress_bar.progress((i+1)/len(uploaded_files), text=progress_text)
                 
-                with st.spinner(f"🖼️ 画像を最適化し、🧠 Geminiがデータを抽出中..."):
+                with st.spinner(f"🖼️ 画像「{file_name}」を最適化し、🧠 Geminiがデータを抽出中..."):
                     image_bytes = uploaded_file.getvalue()
                     img = Image.open(io.BytesIO(image_bytes))
                     img.thumbnail((512, 512))
@@ -87,20 +114,18 @@ def run_shiratama_custom(creds):
                                     name, score = parts[0].strip(), parts[1].strip()
                                     if name and score:
                                         all_player_data.append([name, score])
-                            break # 成功したらループを抜ける
+                            break
                         except Exception as e:
                             if "429" in str(e) and attempt < max_retries - 1:
                                 wait_time = (2 ** attempt) * 5 + random.uniform(1, 3)
                                 st.warning(f"APIの利用上限を検知。{wait_time:.1f}秒待機して再試行します...")
                                 time.sleep(wait_time)
                             else:
-                                st.error(f"ファイル「{file_name}」の抽出中にエラーが発生しました: {e}")
+                                st.error(f"ファイル「{file_name}」の抽出中にエラー: {e}")
                                 break
-                    
-                    # APIへの思いやりタイム
                     time.sleep(5)
 
-            with st.spinner("🔄 名前の正規化と、データの最終チェックを行っています..."):
+            with st.spinner("🔄 名前の正規化とデータの最終チェック..."):
                 correct_names = [name.strip() for name in member_sheet.col_values(1) if name and name.strip()]
                 normalized_player_data = []
                 if correct_names:
@@ -113,7 +138,7 @@ def run_shiratama_custom(creds):
                 seen = set()
                 unique_player_data = [item for item in normalized_player_data if tuple(item) not in seen and not seen.add(tuple(item))]
 
-            with st.spinner("✍️ スプレッドシートに、結果を書き込んでいます..."):
+            with st.spinner("✍️ スプレッドシートに結果を書き込み中..."):
                 row3_values = sheet.row_values(3)
                 target_col = len(row3_values) + 1
                 cell_list = []
@@ -125,41 +150,63 @@ def run_shiratama_custom(creds):
                     sheet.update_cells(cell_list, value_input_option='USER_ENTERED')
 
             progress_bar.empty()
-            st.success(f"🎉 全てのミッションが、完璧に、完了しました！ {len(unique_player_data)}件のデータをスプレッドシートに書き込みました。")
+            st.success(f"🎉 全てのミッションが完璧に完了しました！ {len(unique_player_data)}件のデータをスプレッドシートに書き込みました。")
             st.balloons()
 
     except Exception as e:
-        st.error(f"❌ ミッションの途中で、予期せぬエラーが発生しました: {e}")
-
+        st.error(f"❌ ミッションの途中で予期せぬエラーが発生しました: {e}")
 
 # --- ⑤ ログイン処理と、アプリの実行 ---
-# URLのクエリパラメータから、認証コードを取得
-try:
-    auth_code = st.query_params['code']
-except:
-    auth_code = None
+# Cookieからログイン情報を取得しようと試みる
+authenticator.login()
 
-# 認証コードがあれば、トークンを取得
-if auth_code:
-    token = authenticator.get_token(provider='google', 
-                                    client_id=google_client_id, 
-                                    client_secret=google_client_secret, 
-                                    redirect_uri=google_redirect_uri, 
-                                    code=auth_code)
-    # 取得したトークンを、Cookieに保存
-    st.session_state['credentials'] = token
-    # クエリパラメータを削除して、リダイレクト
-    st.query_params.clear()
-    st.rerun()
+if st.session_state["authentication_status"]:
+    # ログイン成功
+    with st.sidebar:
+        st.write(f'ようこそ、 *{st.session_state["name"]}* さん')
+        authenticator.logout('ログアウト')
+    
+    # ログインしたユーザーの認証情報（creds）を取得
+    credentials = Credentials(**st.session_state['credentials']['google'])
+    
+    # ★★★ ここで、メインの処理を呼び出す！ ★★★
+    # Gemini APIキーを、この段階で、入力してもらう
+    gemini_api_key = st.text_input("Gemini APIキーを入力してください", type="password")
+    run_shiratama_custom(credentials, gemini_api_key)
 
-# Cookieに、有効なトークンがあれば、アプリを実行
-if 'credentials' in st.session_state and st.session_state['credentials']:
-    credentials = Credentials(**st.session_state['credentials'])
-    # ★★★ ここで、メインの処理を、呼び出す！ ★★★
-    run_shiratama_custom(credentials)
+elif st.session_state["authentication_status"] is False:
+    # ログイン失敗
+    st.error('ユーザー名かパスワードが間違っています')
+    # Googleログインボタンを表示
+    st.link_button("Googleアカウントでログイン", auth_url)
 
-# 何もなければ、ログインボタンを表示
-else:
+elif st.session_state["authentication_status"] is None:
+    # 未ログイン状態
     st.title("ようこそ、シラタマさん！")
-    st.info("このAIアシスタントを使うには、Googleアカウントとの連携が必要です。")
-    st.link_button("
+    st.info("このAIアシスタントを使うには、初回のみ、Googleアカウントとの連携が必要です。")
+    st.link_button("Googleアカウントでログイン", auth_url)
+
+# URLのクエリパラメータに認証コードがあれば、トークン取得を試みる
+try:
+    if 'code' in st.query_params:
+        auth_code = st.query_params['code']
+        # トークンを取得し、Cookieに保存する
+        token = authenticator.get_token(provider='google', 
+                                        client_id=google_client_id, 
+                                        client_secret=google_client_secret, 
+                                        redirect_uri=google_redirect_uri, 
+                                        code=auth_code)
+        
+        # 取得したトークン（資格情報）をセッションステートに保存
+        st.session_state['credentials'] = {'google': token}
+        # ログイン状態を成功に更新
+        st.session_state["authentication_status"] = True
+        # ユーザー情報を取得（オプション）
+        user_info = authenticator.get_user_info(provider='google', token=token)
+        st.session_state["name"] = user_info.get('name', 'User')
+        
+        # クエリパラメータを削除して、ページをリフレッシュ
+        st.query_params.clear()
+        st.rerun()
+except Exception as e:
+    st.error(f"認証中にエラーが発生しました: {e}")
