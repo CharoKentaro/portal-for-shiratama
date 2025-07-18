@@ -14,7 +14,17 @@ st.set_page_config(page_title="シラタマさん専用AIアシスタント", pa
 
 # --- ② 認証情報 (Secretsから、サービスアカウント情報を、読み込む) ---
 try:
-    creds_dict = st.secrets["gcp_service_account"]
+    # ★★★ ここが、最後の、そして、本当の、究極の、バグ修正箇所 ★★★
+    # 1. まず、神聖な、金庫（st.secrets）から、データを、そのまま、取り出す
+    secrets_creds = st.secrets["gcp_service_account"]
+    
+    # 2. 別の、普通の、宝箱に、中身を、コピーする
+    creds_dict = dict(secrets_creds)
+    
+    # 3. 普通の、宝箱の、中身を、加工する
+    creds_dict["private_key"] = creds_dict["private_key"].replace('\\n', '\n')
+    
+    # 4. 加工済みの、宝箱を使って、認証を行う
     creds = service_account.Credentials.from_service_account_info(
         creds_dict,
         scopes=['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
@@ -23,7 +33,49 @@ except (KeyError, FileNotFoundError):
     st.error("🚨 重大なエラー：StreamlitのSecretsに、GCPのサービスアカウント情報が正しく設定されていません。")
     st.stop()
 
-# --- ③ メインの処理を実行する関数 ---
+# --- 修正：streamlit-local-storageを安全に初期化 ---
+def safe_local_storage_init():
+    """Local storageを安全に初期化する関数"""
+    try:
+        from streamlit_local_storage import LocalStorage
+        return LocalStorage()
+    except ImportError:
+        st.warning("streamlit-local-storageがインストールされていません。APIキーの記憶機能は無効になります。")
+        return None
+    except Exception as e:
+        st.warning(f"Local storageの初期化に失敗しました: {e}")
+        return None
+
+# Local storageの初期化
+localS = safe_local_storage_init()
+
+def get_saved_api_key():
+    """保存されたAPIキーを安全に取得する関数"""
+    if localS is None:
+        return ""
+    
+    try:
+        saved_key = localS.getItem("gemini_api_key")
+        if isinstance(saved_key, dict) and 'value' in saved_key:
+            return saved_key['value']
+        return ""
+    except Exception as e:
+        st.warning(f"保存されたAPIキーの取得に失敗しました: {e}")
+        return ""
+
+def save_api_key(api_key):
+    """APIキーを安全に保存する関数"""
+    if localS is None:
+        st.warning("Local storageが利用できないため、APIキーを保存できません。")
+        return False
+    
+    try:
+        localS.setItem("gemini_api_key", api_key)
+        return True
+    except Exception as e:
+        st.warning(f"APIキーの保存に失敗しました: {e}")
+        return False
+
 def run_shiratama_custom(gemini_api_key):
     try:
         st.header("⚔️ シラタマさん専用AIアシスタント")
@@ -31,13 +83,11 @@ def run_shiratama_custom(gemini_api_key):
         uploaded_files = st.file_uploader("スクリーンショットを選択", accept_multiple_files=True, type=['png', 'jpg', 'jpeg'])
         if st.button("アップロードした画像のデータ抽出を実行する"):
             if not uploaded_files: st.warning("画像がアップロードされていません。"); st.stop()
-            if not gemini_api_key: st.warning("サイドバーでGemini APIキーを入力してください。"); st.stop()
-            
+            if not gemini_api_key: st.warning("サイドバーでGemini APIキーを入力し、保存してください。"); st.stop()
             gc = gspread.authorize(creds)
             spreadsheet = gc.open_by_key('1j-A8Hq5sc4_y0E07wNd9814mHmheNAnaU8iZAr3C6xo')
             sheet = spreadsheet.worksheet('遠征入力')
             member_sheet = spreadsheet.worksheet('メンバー')
-            
             genai.configure(api_key=gemini_api_key)
             gemini_model = genai.GenerativeModel('gemini-1.5-flash-latest')
             gemini_prompt = """
@@ -104,28 +154,30 @@ def run_shiratama_custom(gemini_api_key):
             st.success(f"🎉 全てのミッションが完璧に完了しました！ {len(unique_player_data)}件のデータをスプレッドシートに書き込みました。")
             st.balloons()
     except Exception as e:
+        import traceback
+        error_details = traceback.format_exc()
         st.error(f"❌ ミッションの途中で予期せぬエラーが発生しました: {e}")
+        st.error(f"詳細なエラー情報:")
+        st.code(error_details)
+        st.error(f"エラーの種類: {type(e).__name__}")
+        st.error(f"エラーメッセージ: {str(e)}")
 
-# --- ④ サイドバーと、アプリの実行 ---
+# --- サイドバー ---
 with st.sidebar:
     st.title("⚔️ シラタマさん専用")
     st.info("このツールは、シラタマさんの特定の業務を自動化するために、特別に設計されています。")
     st.divider()
     
-    # ★★★ あなたの、天才的な、アイデアを、実装 ★★★
-    # APIキーを、セッションステートで、管理する
-    if "gemini_api_key" not in st.session_state:
-        st.session_state.gemini_api_key = ""
-
-    gemini_api_key_input = st.text_input(
-        "Gemini APIキー", 
-        type="password", 
-        value=st.session_state.gemini_api_key,
-        help="シラタマさんの、個人のGemini APIキー"
-    )
+    # APIキーの取得と入力
+    default_value = get_saved_api_key()
+    gemini_api_key_input = st.text_input("Gemini APIキー", type="password", value=default_value, help="シラタマさんの、個人のGemini APIキー")
     
-    # 入力されたキーを、セッションステートに、即座に、反映する
-    st.session_state.gemini_api_key = gemini_api_key_input
+    # APIキーの保存
+    if st.button("このAPIキーをブラウザに記憶させる"):
+        if save_api_key(gemini_api_key_input):
+            st.success("キーを記憶しました！")
+        else:
+            st.error("キーの保存に失敗しました。")
 
-# メインの処理を、セッションステートに、保存された、キーを使って、実行
-run_shiratama_custom(st.session_state.gemini_api_key)
+# メイン処理の実行
+run_shiratama_custom(gemini_api_key_input)
