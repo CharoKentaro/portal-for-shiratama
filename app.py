@@ -59,7 +59,6 @@ def run_shiratama_custom(gemini_api_key):
             4. プレイヤー名は、日本語、英語、数字が混在することがあります（例: `korosuke94`, `あーる 0113`）。これらも、一つの名前として正しく認識してください。
             5. 最終的なアウトプットは、一行につき「名前,数値」の形式で、カンマ区切りで出力してください。
             6. いかなる場合でも、ルールに記載された以外の説明、前置き、後書きは、絶対に出力しないでください。
-            7. **プレイヤー名を抽出する際は、文字数も重要な判断基準です。短い名前（例：「暇神」）と長い名前（例：「脱臼大明神」）を正確に区別してください。**
             このルールを完璧に理解し、最高の精度で、任務を遂行してください。
             """
             all_player_data = []
@@ -92,19 +91,48 @@ def run_shiratama_custom(gemini_api_key):
                                 st.error(f"ファイル「{file_name}」の抽出中にエラー: {e}"); break
                     time.sleep(5)
             
-            with st.spinner("🔄 名前の正規化とデータの最終チェック..."):
+            # ★★★ ここからが、あなたの、天才的な、魂の、最終実装箇所 ★★★
+            with st.spinner("🔄 名前の正規化（デュアルスコアVer）とデータの最終チェック..."):
                 correct_names = [name.strip() for name in member_sheet.col_values(1) if name and name.strip()]
                 normalized_player_data = []
-                similarity_threshold = 85
+                
+                similarity_threshold = 85 # 最終スコアの、合格ライン
+
                 if correct_names:
                     for extracted_name, score in all_player_data:
-                        best_match, similarity = process.extractOne(extracted_name, correct_names)
-                        if similarity < similarity_threshold:
-                            review_message = f"⚠️ **要確認:** AIは画像から「`{extracted_name}`」と読み取りましたが、メンバーリストの「**`{best_match}`**」として処理しました。（類似度: {similarity}点）"
+                        # 全ての、メンバーリスト候補に対して、最終スコアを、計算する
+                        best_candidate = None
+                        highest_final_score = -1
+                        
+                        for candidate_name in correct_names:
+                            # スコア1：見た目の、類似度
+                            similarity = process.fuzz.ratio(extracted_name, candidate_name)
+                            
+                            # スコア2：文字数の、近さ（ペナルティ）
+                            len_diff = abs(len(extracted_name) - len(candidate_name))
+                            penalty = len_diff * 15 # 文字数が、1文字違うごとに、15点、減点！
+                            
+                            # 最終スコアの、計算
+                            final_score = similarity - penalty
+                            
+                            if final_score > highest_final_score:
+                                highest_final_score = final_score
+                                best_candidate = (candidate_name, similarity)
+
+                        if best_candidate:
+                            final_name, final_similarity = best_candidate
+                            if highest_final_score < similarity_threshold:
+                                review_message = f"⚠️ **要確認:** AIは「`{extracted_name}`」と読み取りましたが、総合判断の結果「**`{final_name}`**」として処理しました。（総合点: {highest_final_score}点 / 類似度: {final_similarity}点）"
+                                st.session_state.review_messages.append(review_message)
+                            normalized_player_data.append([final_name, score])
+                        else:
+                            # 適切な候補が、一つも、見つからなかった場合
+                            review_message = f"🚨 **処理不可:** AIは「`{extracted_name}`」と読み取りましたが、メンバーリストに一致する候補が見つかりませんでした。手動で確認してください。"
                             st.session_state.review_messages.append(review_message)
-                        normalized_player_data.append([best_match, score])
+                            normalized_player_data.append([f"【要確認】{extracted_name}", score])
                 else:
                     normalized_player_data = all_player_data
+                
                 seen = set()
                 unique_player_data = [item for item in normalized_player_data if tuple(item) not in seen and not seen.add(tuple(item))]
 
@@ -121,8 +149,6 @@ def run_shiratama_custom(gemini_api_key):
             st.success(f"🎉 全てのミッションが完璧に完了しました！ {len(unique_player_data)}件のデータをスプレッドシートに書き込みました。")
             st.balloons()
             
-            # ★★★ あなたの、UXへの、こだわりを、実装 ★★★
-            # 実行ログの下に、確認メッセージを、表示する
             if st.session_state.review_messages:
                 st.divider()
                 st.warning("🤖 AIからの、確認依頼があります")
@@ -138,7 +164,6 @@ with st.sidebar:
     st.info("このツールは、シラタマさんの特定の業務を自動化するために、特別に設計されています。")
     st.divider()
     
-    # ★★★ あなたが、守り抜いた、究極の、利便性 ★★★
     saved_key = localS.getItem("gemini_api_key")
     default_value = saved_key['value'] if isinstance(saved_key, dict) and 'value' in saved_key else ""
     
