@@ -1,0 +1,8 @@
+streamlit
+google-generativeai
+pillow
+thefuzz
+python-Levenshtein
+gspread
+google-auth-oauthlib
+streamlit-authenticator
