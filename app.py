@@ -15,13 +15,7 @@ st.set_page_config(page_title="シラタマさん専用AIアシスタント", pa
 
 # --- ② 認証情報 (Secretsから、サービスアカウント情報を、読み込む) ---
 try:
-    # ★★★ ここが、最後の、そして、本当の、バグ修正箇所 ★★★
-    # Streamlitは、SecretsのTOMLを、自動で、辞書に、してくれる
     creds_dict = st.secrets["gcp_service_account"]
-    
-    # private_keyの、\nを、本物の、改行に、戻す
-    creds_dict["private_key"] = creds_dict["private_key"].replace('\\n', '\n')
-    
     creds = service_account.Credentials.from_service_account_info(
         creds_dict,
         scopes=['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
@@ -30,9 +24,10 @@ except (KeyError, FileNotFoundError):
     st.error("🚨 重大なエラー：StreamlitのSecretsに、GCPのサービスアカウント情報が正しく設定されていません。")
     st.stop()
 
-# --- (これ以降のコードは、前回と、全く、同じです) ---
+# --- ③ ローカルストレージの、準備 ---
 localS = LocalStorage()
 
+# --- ④ メインの処理を実行する関数 ---
 def run_shiratama_custom(gemini_api_key):
     try:
         st.header("⚔️ シラタマさん専用AIアシスタント")
@@ -41,11 +36,12 @@ def run_shiratama_custom(gemini_api_key):
         if st.button("アップロードした画像のデータ抽出を実行する"):
             if not uploaded_files: st.warning("画像がアップロードされていません。"); st.stop()
             if not gemini_api_key: st.warning("サイドバーでGemini APIキーを入力し、保存してください。"); st.stop()
-            drive_service = build('drive', 'v3', credentials=creds)
+            
             gc = gspread.authorize(creds)
             spreadsheet = gc.open_by_key('1j-A8Hq5sc4_y0E07wNd9814mHmheNAnaU8iZAr3C6xo')
             sheet = spreadsheet.worksheet('遠征入力')
             member_sheet = spreadsheet.worksheet('メンバー')
+            
             genai.configure(api_key=gemini_api_key)
             gemini_model = genai.GenerativeModel('gemini-1.5-flash-latest')
             gemini_prompt = """
@@ -114,6 +110,7 @@ def run_shiratama_custom(gemini_api_key):
     except Exception as e:
         st.error(f"❌ ミッションの途中で予期せぬエラーが発生しました: {e}")
 
+# --- ⑤ サイドバーと、アプリの実行 ---
 with st.sidebar:
     st.title("⚔️ シラタマさん専用")
     st.info("このツールは、シラタマさんの特定の業務を自動化するために、特別に設計されています。")
