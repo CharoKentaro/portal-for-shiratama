@@ -15,41 +15,37 @@ st.set_page_config(page_title="シラタマさん専用AIアシスタント", pa
 
 # --- ② 認証情報 (Secretsから、サービスアカウント情報を、読み込む) ---
 try:
-    # st.secretsは、TOML形式を、自動で、辞書に、変換してくれる
-    creds_json = st.secrets["gcp_service_account"]
-    # 辞書から、認証情報オブジェクトを、作成
+    # ★★★ ここが、最後の、そして、本当の、バグ修正箇所 ★★★
+    # Streamlitは、SecretsのTOMLを、自動で、辞書に、してくれる
+    creds_dict = st.secrets["gcp_service_account"]
+    
+    # private_keyの、\nを、本物の、改行に、戻す
+    creds_dict["private_key"] = creds_dict["private_key"].replace('\\n', '\n')
+    
     creds = service_account.Credentials.from_service_account_info(
-        creds_json,
+        creds_dict,
         scopes=['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
     )
 except (KeyError, FileNotFoundError):
-    st.error("🚨 重大なエラー：StreamlitのSecretsに、GCPのサービスアカウント情報が設定されていません。")
+    st.error("🚨 重大なエラー：StreamlitのSecretsに、GCPのサービスアカウント情報が正しく設定されていません。")
     st.stop()
 
-# --- ③ ローカルストレージの、準備 ---
+# --- (これ以降のコードは、前回と、全く、同じです) ---
 localS = LocalStorage()
 
-# --- ④ メインの処理を実行する関数 ---
 def run_shiratama_custom(gemini_api_key):
     try:
         st.header("⚔️ シラタマさん専用AIアシスタント")
         st.info("処理したいスクリーンショット画像を、すべて、ここにアップロードしてください。")
-
         uploaded_files = st.file_uploader("スクリーンショットを選択", accept_multiple_files=True, type=['png', 'jpg', 'jpeg'])
-
         if st.button("アップロードした画像のデータ抽出を実行する"):
-            if not uploaded_files:
-                st.warning("画像がアップロードされていません。"); st.stop()
-            if not gemini_api_key:
-                st.warning("サイドバーでGemini APIキーを入力し、保存してください。"); st.stop()
-                
-            # --- ここからが、あなたの魂のコード ---
+            if not uploaded_files: st.warning("画像がアップロードされていません。"); st.stop()
+            if not gemini_api_key: st.warning("サイドバーでGemini APIキーを入力し、保存してください。"); st.stop()
             drive_service = build('drive', 'v3', credentials=creds)
             gc = gspread.authorize(creds)
             spreadsheet = gc.open_by_key('1j-A8Hq5sc4_y0E07wNd9814mHmheNAnaU8iZAr3C6xo')
             sheet = spreadsheet.worksheet('遠征入力')
             member_sheet = spreadsheet.worksheet('メンバー')
-            
             genai.configure(api_key=gemini_api_key)
             gemini_model = genai.GenerativeModel('gemini-1.5-flash-latest')
             gemini_prompt = """
@@ -64,16 +60,13 @@ def run_shiratama_custom(gemini_api_key):
             6. いかなる場合でも、ルールに記載された以外の説明、前置き、後書きは、絶対に出力しないでください。
             このルールを完璧に理解し、最高の精度で、任務を遂行してください。
             """
-
             all_player_data = []
             max_retries = 3
             progress_bar = st.progress(0, text="処理を開始します...")
-            
             for i, uploaded_file in enumerate(uploaded_files):
                 file_name = uploaded_file.name
                 progress_text = f"処理中: {i+1}/{len(uploaded_files)} - {file_name}"
                 progress_bar.progress((i+1)/len(uploaded_files), text=progress_text)
-                
                 with st.spinner(f"🖼️ 画像「{file_name}」を最適化し、🧠 Geminiがデータを抽出中..."):
                     image_bytes = uploaded_file.getvalue()
                     img = Image.open(io.BytesIO(image_bytes))
@@ -96,7 +89,6 @@ def run_shiratama_custom(gemini_api_key):
                             else:
                                 st.error(f"ファイル「{file_name}」の抽出中にエラー: {e}"); break
                     time.sleep(5)
-            
             with st.spinner("🔄 名前の正規化とデータの最終チェック..."):
                 correct_names = [name.strip() for name in member_sheet.col_values(1) if name and name.strip()]
                 normalized_player_data = []
@@ -108,7 +100,6 @@ def run_shiratama_custom(gemini_api_key):
                     normalized_player_data = all_player_data
                 seen = set()
                 unique_player_data = [item for item in normalized_player_data if tuple(item) not in seen and not seen.add(tuple(item))]
-            
             with st.spinner("✍️ スプレッドシートに結果を書き込み中..."):
                 row3_values = sheet.row_values(3)
                 target_col = len(row3_values) + 1
@@ -117,28 +108,21 @@ def run_shiratama_custom(gemini_api_key):
                     cell_list.append(gspread.Cell(3 + i, target_col, name))
                     cell_list.append(gspread.Cell(3 + i, target_col + 1, score))
                 if cell_list: sheet.update_cells(cell_list, value_input_option='USER_ENTERED')
-            
             progress_bar.empty()
             st.success(f"🎉 全てのミッションが完璧に完了しました！ {len(unique_player_data)}件のデータをスプレッドシートに書き込みました。")
             st.balloons()
-
     except Exception as e:
         st.error(f"❌ ミッションの途中で予期せぬエラーが発生しました: {e}")
 
-# --- ⑤ サイドバーと、アプリの実行 ---
 with st.sidebar:
     st.title("⚔️ シラタマさん専用")
     st.info("このツールは、シラタマさんの特定の業務を自動化するために、特別に設計されています。")
     st.divider()
-    
     saved_key = localS.getItem("gemini_api_key")
     default_value = saved_key['value'] if isinstance(saved_key, dict) and 'value' in saved_key else ""
-    
     gemini_api_key_input = st.text_input("Gemini APIキー", type="password", value=default_value, help="シラタマさんの、個人のGemini APIキー")
-    
     if st.button("このAPIキーをブラウザに記憶させる"):
         localS.setItem("gemini_api_key", gemini_api_key_input)
         st.success("キーを記憶しました！")
 
-# メインの処理を、サイドバーで入力されたキーを使って、実行
 run_shiratama_custom(gemini_api_key_input)
