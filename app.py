@@ -2,58 +2,49 @@ import streamlit as st
 import gspread
 import google.generativeai as genai
 from googleapiclient.discovery import build
-from google.oauth2.credentials import Credentials
-import streamlit_authenticator as stauth
+from google.oauth2 import service_account
 from PIL import Image
 import io
 from thefuzz import process
 import random
 import time
+from streamlit_local_storage import LocalStorage
 
 # --- ① アプリの基本設定 ---
 st.set_page_config(page_title="シラタマさん専用AIアシスタント", page_icon="⚔️", layout="wide")
 
-# --- ② Google認証情報 (Secretsから読み込む) ---
+# --- ② 認証情報 (Secretsから、サービスアカウント情報を、読み込む) ---
 try:
-    google_creds = st.secrets["google_oauth"]
-    google_client_id = google_creds["client_id"]
-    google_client_secret = google_creds["client_secret"]
-    google_redirect_uri = google_creds["redirect_uris"][0]
-except (KeyError, FileNotFoundError, IndexError):
-    st.error("🚨 重大なエラー：StreamlitのSecretsに、GoogleのOAuth情報が正しく設定されていません。")
-    st.stop()
-
-# --- ③ Streamlit Authenticator の設定 (最新・最終版) ---
-try:
-    config = st.secrets['authenticator']
-    authenticator = stauth.Authenticate(
-        config['credentials'],
-        config['cookie']['name'],
-        config['cookie']['key'],
-        config['cookie']['expiry_days'],
+    # st.secretsは、TOML形式を、自動で、辞書に、変換してくれる
+    creds_json = st.secrets["gcp_service_account"]
+    # 辞書から、認証情報オブジェクトを、作成
+    creds = service_account.Credentials.from_service_account_info(
+        creds_json,
+        scopes=['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
     )
 except (KeyError, FileNotFoundError):
-    st.error("🚨 重大なエラー：StreamlitのSecretsに、Authenticatorの設定がありません。")
+    st.error("🚨 重大なエラー：StreamlitのSecretsに、GCPのサービスアカウント情報が設定されていません。")
     st.stop()
 
-# Google OAuthのためのURLを生成
-auth_url = authenticator.get_authorization_url(
-    provider='google',
-    client_id=google_client_id,
-    redirect_uri=google_redirect_uri,
-    scope=["https.googleapis.com/auth/spreadsheets", "https.googleapis.com/auth/drive"]
-)
+# --- ③ ローカルストレージの、準備 ---
+localS = LocalStorage()
 
 # --- ④ メインの処理を実行する関数 ---
-def run_shiratama_custom(creds, gemini_api_key):
+def run_shiratama_custom(gemini_api_key):
     try:
         st.header("⚔️ シラタマさん専用AIアシスタント")
         st.info("処理したいスクリーンショット画像を、すべて、ここにアップロードしてください。")
+
         uploaded_files = st.file_uploader("スクリーンショットを選択", accept_multiple_files=True, type=['png', 'jpg', 'jpeg'])
+
         if st.button("アップロードした画像のデータ抽出を実行する"):
-            if not uploaded_files: st.warning("画像がアップロードされていません。"); st.stop()
-            if not gemini_api_key: st.warning("サイドバーでGemini APIキーを入力してください。"); st.stop()
-            
+            if not uploaded_files:
+                st.warning("画像がアップロードされていません。"); st.stop()
+            if not gemini_api_key:
+                st.warning("サイドバーでGemini APIキーを入力し、保存してください。"); st.stop()
+                
+            # --- ここからが、あなたの魂のコード ---
+            drive_service = build('drive', 'v3', credentials=creds)
             gc = gspread.authorize(creds)
             spreadsheet = gc.open_by_key('1j-A8Hq5sc4_y0E07wNd9814mHmheNAnaU8iZAr3C6xo')
             sheet = spreadsheet.worksheet('遠征入力')
@@ -77,10 +68,12 @@ def run_shiratama_custom(creds, gemini_api_key):
             all_player_data = []
             max_retries = 3
             progress_bar = st.progress(0, text="処理を開始します...")
+            
             for i, uploaded_file in enumerate(uploaded_files):
                 file_name = uploaded_file.name
                 progress_text = f"処理中: {i+1}/{len(uploaded_files)} - {file_name}"
                 progress_bar.progress((i+1)/len(uploaded_files), text=progress_text)
+                
                 with st.spinner(f"🖼️ 画像「{file_name}」を最適化し、🧠 Geminiがデータを抽出中..."):
                     image_bytes = uploaded_file.getvalue()
                     img = Image.open(io.BytesIO(image_bytes))
@@ -103,6 +96,7 @@ def run_shiratama_custom(creds, gemini_api_key):
                             else:
                                 st.error(f"ファイル「{file_name}」の抽出中にエラー: {e}"); break
                     time.sleep(5)
+            
             with st.spinner("🔄 名前の正規化とデータの最終チェック..."):
                 correct_names = [name.strip() for name in member_sheet.col_values(1) if name and name.strip()]
                 normalized_player_data = []
@@ -114,6 +108,7 @@ def run_shiratama_custom(creds, gemini_api_key):
                     normalized_player_data = all_player_data
                 seen = set()
                 unique_player_data = [item for item in normalized_player_data if tuple(item) not in seen and not seen.add(tuple(item))]
+            
             with st.spinner("✍️ スプレッドシートに結果を書き込み中..."):
                 row3_values = sheet.row_values(3)
                 target_col = len(row3_values) + 1
@@ -122,66 +117,28 @@ def run_shiratama_custom(creds, gemini_api_key):
                     cell_list.append(gspread.Cell(3 + i, target_col, name))
                     cell_list.append(gspread.Cell(3 + i, target_col + 1, score))
                 if cell_list: sheet.update_cells(cell_list, value_input_option='USER_ENTERED')
+            
             progress_bar.empty()
             st.success(f"🎉 全てのミッションが完璧に完了しました！ {len(unique_player_data)}件のデータをスプレッドシートに書き込みました。")
             st.balloons()
+
     except Exception as e:
         st.error(f"❌ ミッションの途中で予期せぬエラーが発生しました: {e}")
 
-# --- ⑤ ログイン処理と、アプリの実行 ---
-# ★★★ ここが、最後の、そして、本当の、バグ修正箇所 ★★★
-# URLのクエリパラメータに認証コードがあれば、トークン取得を試みる
-try:
-    if 'code' in st.query_params:
-        auth_code = st.query_params['code']
-        token = authenticator.get_token_from_code(provider='google', 
-                                                   client_id=google_client_id, 
-                                                   client_secret=google_client_secret, 
-                                                   redirect_uri=google_redirect_uri, 
-                                                   code=auth_code)
-        # 取得したトークン（資格情報）をセッションステートに保存
-        st.session_state['credentials'] = token
-        
-        # ユーザー情報を取得し、セッションステートに保存
-        user_info = authenticator.get_user_info_from_token(provider='google', token=token)
-        st.session_state['name'] = user_info.get('name', 'User')
-        
-        # ログイン状態を成功に更新
-        st.session_state["authentication_status"] = True
-        
-        # クエリパラメータを削除して、ページをリフレッシュ
-        st.query_params.clear()
-        st.rerun()
-except Exception as e:
-    st.error(f"認証中にエラーが発生しました: {e}")
-
-# Cookieからログイン情報を取得しようと試みる
-authenticator.login()
-
-if st.session_state["authentication_status"]:
-    # ログイン成功
-    with st.sidebar:
-        st.write(f'ようこそ、 *{st.session_state["name"]}* さん')
-        authenticator.logout('ログアウト', key='logout_button')
+# --- ⑤ サイドバーと、アプリの実行 ---
+with st.sidebar:
+    st.title("⚔️ シラタマさん専用")
+    st.info("このツールは、シラタマさんの特定の業務を自動化するために、特別に設計されています。")
+    st.divider()
     
-    token = st.session_state['credentials']
-    credentials = Credentials(token=token['access_token'],
-                              refresh_token=token.get('refresh_token'),
-                              token_uri=token['token_uri'],
-                              client_id=google_client_id,
-                              client_secret=google_client_secret,
-                              scopes=token['scopes'])
+    saved_key = localS.getItem("gemini_api_key")
+    default_value = saved_key['value'] if isinstance(saved_key, dict) and 'value' in saved_key else ""
     
-    with st.sidebar:
-        gemini_api_key = st.text_input("Gemini APIキーを入力してください", type="password", key="gemini_key_input")
+    gemini_api_key_input = st.text_input("Gemini APIキー", type="password", value=default_value, help="シラタマさんの、個人のGemini APIキー")
     
-    run_shiratama_custom(credentials, gemini_api_key)
+    if st.button("このAPIキーをブラウザに記憶させる"):
+        localS.setItem("gemini_api_key", gemini_api_key_input)
+        st.success("キーを記憶しました！")
 
-elif st.session_state["authentication_status"] is False:
-    st.error('ユーザー名かパスワードが間違っています')
-    st.link_button("Googleアカウントでログイン", auth_url)
-
-elif st.session_state["authentication_status"] is None:
-    st.title("ようこそ、シラタマさん！")
-    st.info("このAIアシスタントを使うには、初回のみ、Googleアカウントとの連携が必要です。")
-    st.link_button("Googleアカウントでログイン", auth_url)
+# メインの処理を、サイドバーで入力されたキーを使って、実行
+run_shiratama_custom(gemini_api_key_input)
