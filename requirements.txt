@@ -5,4 +5,4 @@ thefuzz
 python-Levenshtein
 gspread
 google-auth-oauthlib
-streamlit-authenticator
+google-api-python-client
