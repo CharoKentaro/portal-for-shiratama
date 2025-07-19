@@ -30,7 +30,7 @@ localS = LocalStorage()
 # --- ④ メインの処理を実行する関数 ---
 def run_shiratama_custom(gemini_api_key):
     try:
-        st.header("✨ 白玉さん専用AI ✨")
+        st.header("✨ まほろば！ ✨")
         st.info("処理したいスクリーンショット画像を、すべて、ここにアップロードしてください。")
         uploaded_files = st.file_uploader("スクリーンショットを選択", accept_multiple_files=True, type=['png', 'jpg', 'jpeg'])
 
@@ -160,7 +160,7 @@ def run_shiratama_custom(gemini_api_key):
 
 # --- ⑤ サイドバーと、APIキー入力 ---
 with st.sidebar:
-    st.title("✨ 白玉さん専用")
+    st.title("✨白玉さん専用✨")
     st.info("このツールは、特定の業務を自動化するために、特別に設計されています。")
     st.divider()
     
