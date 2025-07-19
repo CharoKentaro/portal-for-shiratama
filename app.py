@@ -160,7 +160,7 @@ def run_shiratama_custom(gemini_api_key):
 
 # --- ⑤ サイドバーと、APIキー入力 ---
 with st.sidebar:
-    st.title("✨白玉さん専用✨")
+    st.title("✨白玉さん専用")
     st.info("このツールは、特定の業務を自動化するために、特別に設計されています。")
     st.divider()
     
