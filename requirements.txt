@@ -3,8 +3,8 @@ gspread
 google-generativeai
 google-api-python-client
 google-auth-oauthlib
-google-auth-httplib2  <-- ★追加①
+google-auth-httplib2
 Pillow
 thefuzz
 python-Levenshtein
-streamlit-local-storage  <-- ★追加②
+streamlit-local-storage
