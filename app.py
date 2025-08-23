@@ -1,6 +1,6 @@
 import streamlit as st
 import gspread
-import google.generativeai as genai
+import google.genergenerativeai as genai
 from googleapiclient.discovery import build
 from google.oauth2 import service_account
 from PIL import Image
@@ -53,8 +53,6 @@ def run_shiratama_custom(gemini_api_key):
             if not uploaded_files: st.warning("画像がアップロードされていません。"); st.stop()
             if not gemini_api_key: st.warning("サイドバーでGemini APIキーを入力し、保存してください。"); st.stop()
             
-            # --- ここから下の処理は、ボタンが押された後に実行される ---
-            
             gc = gspread.authorize(creds)
             spreadsheet = gc.open_by_key('1j-A8Hq5sc4_y0E07wNd9814mHmheNAnaU8iZAr3C6xo')
             member_sheet = spreadsheet.worksheet('メンバー')
@@ -103,7 +101,7 @@ def run_shiratama_custom(gemini_api_key):
                                 time.sleep(wait_time)
                             else:
                                 st.error(f"ファイル「{file_name}」の抽出中にエラー: {e}"); break
-                    time.sleep(1) # APIへの負荷を考慮
+                    time.sleep(1)
             
             with st.spinner("🔄 名前の正規化（デュアルスコアVer）とデータの最終チェック..."):
                 correct_names = [name.strip() for name in member_sheet.col_values(1) if name and name.strip()]
@@ -121,12 +119,24 @@ def run_shiratama_custom(gemini_api_key):
                             if final_score > highest_final_score:
                                 highest_final_score = final_score
                                 best_candidate = (candidate_name, similarity)
+                        
                         if best_candidate:
-                            final_name, final_similarity = best_candidate
-                            if highest_final_score < similarity_threshold:
-                                review_message = f"⚠️ **要確認:** AIは「`{extracted_name}`」と読み取りましたが、総合判断の結果「**`{final_name}`**」として処理しました。（総合点: {highest_final_score}点）"
+                            # ★★★【最後の調整】ここからが、最終的な実装です ★★★
+                            
+                            # 【特別ルール】もし総合点が0点以下なら、AIは書き換えを諦め、元のデータを採用する
+                            if highest_final_score <= 0:
+                                review_message = f"🚨 **処理不可:** AIは「`{extracted_name}`」と読み取りましたが、候補との一致度が0点でした。書き換えを行わず、手動確認をお願いします。"
                                 st.session_state.review_messages.append(review_message)
-                            normalized_player_data.append([final_name, score])
+                                normalized_player_data.append([f"【要確認】{extracted_name}", score])
+                            
+                            # 【通常ルール】総合点が0点より高い場合のみ、今までの処理を行う
+                            else:
+                                final_name, final_similarity = best_candidate
+                                if highest_final_score < similarity_threshold:
+                                    review_message = f"⚠️ **要確認:** AIは「`{extracted_name}`」と読み取りましたが、総合判断の結果「**`{final_name}`**」として処理しました。（総合点: {highest_final_score}点）"
+                                    st.session_state.review_messages.append(review_message)
+                                normalized_player_data.append([final_name, score])
+                        
                         else:
                             review_message = f"🚨 **処理不可:** AIは「`{extracted_name}`」と読み取りましたが、メンバーリストに一致する候補が見つかりませんでした。手動で確認してください。"
                             st.session_state.review_messages.append(review_message)
@@ -136,7 +146,6 @@ def run_shiratama_custom(gemini_api_key):
                 seen = set()
                 unique_player_data = [item for item in normalized_player_data if tuple(item) not in seen and not seen.add(tuple(item))]
 
-            # --- ラジオボタンの選択に応じて、書き込み先を分岐 ---
             if selected_task == "⚔️ 遠征入力":
                 with st.spinner("✍️ スプレッドシートに結果を書き込み中..."):
                     sheet = spreadsheet.worksheet('遠征入力')
