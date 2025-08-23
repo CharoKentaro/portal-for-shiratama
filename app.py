@@ -122,89 +122,93 @@ def write_data_to_sheet(sheet, data, start_row, name_col, score_col):
 def run_shiratama_custom(gemini_api_key):
     try:
         st.header("✨ まほろば！ ✨")
-        st.info("処理したいスクリーンショット画像を、すべて、ここにアップロードしてください。")
-        uploaded_files = st.file_uploader("スクリーンショットを選択", accept_multiple_files=True, type=['png', 'jpg', 'jpeg'], key="main_uploader")
+        
+        # --- ステップ1：処理の選択 ---
+        st.subheader("1. 実行したい処理を選択してください")
+        selected_task = st.radio(
+            "処理の選択:",
+            ("⚔️ 遠征データ抽出", "🗺️ 探索結果抽出"),
+            horizontal=True,
+            label_visibility="collapsed"
+        )
 
         if "review_messages" not in st.session_state:
             st.session_state.review_messages = []
 
-        # --- 2つの機能のボタンを配置 ---
-        col1, col2 = st.columns(2)
+        if selected_task:
+            # --- ステップ2：画像のアップロード ---
+            st.subheader("2. 処理したいスクリーンショット画像をアップロードしてください")
+            uploaded_files = st.file_uploader(
+                "スクリーンショットを選択",
+                accept_multiple_files=True,
+                type=['png', 'jpg', 'jpeg'],
+                key=f"uploader_{selected_task}" # 選択に応じてキーを変更
+            )
 
-        # --- 機能1：遠征データの抽出 ---
-        if col1.button("⚔️ 遠征データの抽出を実行する", use_container_width=True):
-            st.session_state.review_messages = []
-            if not uploaded_files: st.warning("画像がアップロードされていません。"); st.stop()
-            if not gemini_api_key: st.warning("サイドバーでGemini APIキーを入力し、保存してください。"); st.stop()
-            
-            # GeminiとGoogle Sheetsの準備
-            gc = gspread.authorize(creds)
-            spreadsheet = gc.open_by_key('1EOJp_J3yPi9Yp6WqabJ_pdJUeIkGKCN9d-xae5Mf7PY')
-            ensei_sheet = spreadsheet.worksheet('遠征入力')
-            member_sheet = spreadsheet.worksheet('メンバー')
-            genai.configure(api_key=gemini_api_key)
-            gemini_model = genai.GenerativeModel('gemini-1.5-flash-latest')
-            
-            gemini_prompt_ensei = """
-            あなたは、与えられたゲームのスクリーンショット画像を直接解析する、超高精度のデータ抽出AIです。
-            あなたの使命は、画像の中から「プレイヤー名」と「スコア」のペアだけを完璧に抽出し、指定された形式で出力することです。
-            #厳格なルール
-            (以下、プロンプト内容は既存のものと同じなので省略)
-            """
-            
-            # ステップ実行
-            all_data = extract_data_from_images(uploaded_files, gemini_model, gemini_prompt_ensei)
-            unique_data, review_msgs = normalize_names(all_data, member_sheet)
-            st.session_state.review_messages.extend(review_msgs)
-            
-            # 「遠征入力」シートの書き込み位置を計算
-            row3_values = ensei_sheet.row_values(3)
-            target_col = len(row3_values) + 1
-            write_data_to_sheet(ensei_sheet, unique_data, start_row=3, name_col=target_col, score_col=target_col + 1)
-            
-            st.success(f"🎉 遠征データ抽出完了！ {len(unique_data)}件のデータをスプレッドシートに書き込みました。")
+            # --- ステップ3：実行ボタン ---
+            st.subheader("3. データ抽出を実行します")
+            if st.button(f"「{selected_task}」を実行する", use_container_width=True, type="primary"):
+                st.session_state.review_messages = []
+                if not uploaded_files: st.warning("画像がアップロードされていません。"); st.stop()
+                if not gemini_api_key: st.warning("サイドバーでGemini APIキーを入力し、保存してください。"); st.stop()
+                
+                # GeminiとGoogle Sheetsの準備
+                gc = gspread.authorize(creds)
+                spreadsheet = gc.open_by_key('1EOJp_J3yPi9Yp6WqabJ_pdJUeIkGKCN9d-xae5Mf7PY')
+                member_sheet = spreadsheet.worksheet('メンバー')
+                genai.configure(api_key=gemini_api_key)
+                gemini_model = genai.GenerativeModel('gemini-1.5-flash-latest')
+                
+                # 選択されたタスクに応じて処理を分岐
+                if selected_task == "⚔️ 遠征データ抽出":
+                    gemini_prompt = """
+                    あなたは、与えられたゲームのスクリーンショット画像を直接解析する、超高精度のデータ抽出AIです。
+                    あなたの使命は、画像の中から「プレイヤー名」と「スコア」のペアだけを完璧に抽出し、指定された形式で出力することです。
+                    #厳格なルール
+                    (以下、プロンプト内容は既存のものと同じなので省略)
+                    """
+                    # ステップ実行
+                    all_data = extract_data_from_images(uploaded_files, gemini_model, gemini_prompt)
+                    unique_data, review_msgs = normalize_names(all_data, member_sheet)
+                    st.session_state.review_messages.extend(review_msgs)
+                    
+                    # 「遠征入力」シートの書き込み位置を計算
+                    sheet_to_write = spreadsheet.worksheet('遠征入力')
+                    row3_values = sheet_to_write.row_values(3)
+                    target_col = len(row3_values) + 1
+                    write_data_to_sheet(sheet_to_write, unique_data, start_row=3, name_col=target_col, score_col=target_col + 1)
+                    
+                    st.success(f"🎉 遠征データ抽出完了！ {len(unique_data)}件のデータをスプレッドシートに書き込みました。")
+                    st.balloons()
+                
+                elif selected_task == "🗺️ 探索結果抽出":
+                    gemini_prompt = """
+                    あなたは、与えられたゲームのスクリーンショット画像を直接解析する、超高精度のデータ抽出AIです。
+                    あなたの使命は、画像の中から「キャラクター名」と「スコア」のペアだけを完璧に抽出し、指定された形式で出力することです。
+                    #厳格なルール
+                    (以下、プロンプト内容は既存のものとほぼ同じ。「プレイヤー名」を「キャラクター名」に変更)
+                    """
+                    # ステップ実行
+                    all_data = extract_data_from_images(uploaded_files, gemini_model, gemini_prompt)
+                    unique_data, review_msgs = normalize_names(all_data, member_sheet)
+                    st.session_state.review_messages.extend(review_msgs)
 
-        # --- 機能2：探索結果の抽出 (新機能) ---
-        if col2.button("🗺️ 探索結果の抽出を実行する", use_container_width=True):
-            st.session_state.review_messages = []
-            if not uploaded_files: st.warning("画像がアップロードされていません。"); st.stop()
-            if not gemini_api_key: st.warning("サイドバーでGemini APIキーを入力し、保存してください。"); st.stop()
-
-            # GeminiとGoogle Sheetsの準備
-            gc = gspread.authorize(creds)
-            spreadsheet = gc.open_by_key('1EOJp_J3yPi9Yp6WqabJ_pdJUeIkGKCN9d-xae5Mf7PY')
-            tansaku_sheet = spreadsheet.worksheet('探索入力')
-            member_sheet = spreadsheet.worksheet('メンバー') # メンバー名は共通と仮定
-            genai.configure(api_key=gemini_api_key)
-            gemini_model = genai.GenerativeModel('gemini-1.5-flash-latest')
-            
-            gemini_prompt_tansaku = """
-            あなたは、与えられたゲームのスクリーンショット画像を直接解析する、超高精度のデータ抽出AIです。
-            あなたの使命は、画像の中から「キャラクター名」と「スコア」のペアだけを完璧に抽出し、指定された形式で出力することです。
-            #厳格なルール
-            (以下、プロンプト内容は既存のものとほぼ同じ。「プレイヤー名」を「キャラクター名」に変更)
-            """
-            
-            # ステップ実行
-            all_data = extract_data_from_images(uploaded_files, gemini_model, gemini_prompt_tansaku)
-            unique_data, review_msgs = normalize_names(all_data, member_sheet)
-            st.session_state.review_messages.extend(review_msgs)
-            
-            # 「探索入力」シートのA3, B3から書き込み
-            write_data_to_sheet(tansaku_sheet, unique_data, start_row=3, name_col=1, score_col=2)
-            
-            st.success(f"🎉 探索結果抽出完了！ {len(unique_data)}件のデータをスプレッドシートに書き込みました。")
+                    # 「探索入力」シートのA3, B3から書き込み
+                    sheet_to_write = spreadsheet.worksheet('探索入力')
+                    write_data_to_sheet(sheet_to_write, unique_data, start_row=3, name_col=1, score_col=2)
+                    
+                    st.success(f"🎉 探索結果抽出完了！ {len(unique_data)}件のデータをスプレッドシートに書き込みました。")
+                    st.balloons()
 
         # --- 処理完了後の共通メッセージ表示 ---
         if st.session_state.review_messages:
             st.divider()
             st.warning("🤖 AIからの、確認依頼があります")
-            st.balloons()
             for msg in st.session_state.review_messages:
                 st.markdown(msg)
 
-    except gspread.exceptions.WorksheetNotFound:
-        st.error("🚨 重大なエラー：指定されたワークシート（'遠征入力', '探索入力', 'メンバー'のいずれか）が見つかりません。")
+    except gspread.exceptions.WorksheetNotFound as e:
+        st.error(f"🚨 重大なエラー：指定されたワークシートが見つかりません。シート名を確認してください: {e}")
     except Exception as e:
         st.error(f"❌ ミッションの途中で予期せぬエラーが発生しました: {e}")
 
