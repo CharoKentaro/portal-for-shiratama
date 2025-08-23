@@ -66,7 +66,7 @@ def extract_data_from_images(uploaded_files, gemini_model, gemini_prompt):
     progress_bar.empty()
     return all_player_data
 
-# --- B. 名前を正規化する共通関数 ---
+# --- B. 名前を正規化する共通関数 (元の成功ロジックに修正) ---
 def normalize_names(all_player_data, member_sheet):
     with st.spinner("🔄 名前の正規化（デュアルスコアVer）とデータの最終チェック..."):
         correct_names = [name.strip() for name in member_sheet.col_values(1) if name and name.strip()]
@@ -93,13 +93,15 @@ def normalize_names(all_player_data, member_sheet):
 
             if best_candidate:
                 final_name, final_similarity = best_candidate
-                if highest_final_score >= similarity_threshold:
-                    normalized_player_data.append([final_name, score])
-                else:
-                    review_message = f"⚠️ **要確認:** AIは「`{extracted_name}`」と読み取りました。最も近い候補は「**`{final_name}`**」ですが、スコアが低かったため書き換えませんでした。手動で確認してください。（総合点: {highest_final_score}点 / 類似度: {final_similarity}点）"
+                # スコアがしきい値を下回った場合のみ、アプリ上で確認メッセージを作成する
+                if highest_final_score < similarity_threshold:
+                    review_message = f"⚠️ **要確認:** AIは「`{extracted_name}`」と読み取りましたが、総合判断の結果「**`{final_name}`**」として処理しました。（総合点: {highest_final_score}点 / 類似度: {final_similarity}点）"
                     review_messages.append(review_message)
-                    normalized_player_data.append([f"【要確認】{extracted_name}", score])
+                
+                # スコアに関わらず、「常に」最も近い候補の名前に正規化してスプレッドシート用のデータを作成
+                normalized_player_data.append([final_name, score])
             else:
+                # 適切な候補が一つも見つからなかった場合
                 review_message = f"🚨 **処理不可:** AIは「`{extracted_name}`」と読み取りましたが、メンバーリストに一致する候補が見つかりませんでした。手動で確認してください。"
                 review_messages.append(review_message)
                 normalized_player_data.append([f"【要確認】{extracted_name}", score])
@@ -113,29 +115,22 @@ def run_shiratama_custom(gemini_api_key):
     try:
         st.header("✨ まほろば！ ✨")
         
-        # --- ステップ1：処理の選択 ---
         st.subheader("1. 実行したい処理を選択してください")
         selected_task = st.radio(
-            "処理の選択:",
-            ("⚔️ 遠征データ抽出", "🗺️ 探索結果抽出"),
-            horizontal=True,
-            label_visibility="collapsed"
+            "処理の選択:", ("⚔️ 遠征データ抽出", "🗺️ 探索結果抽出"),
+            horizontal=True, label_visibility="collapsed"
         )
 
         if "review_messages" not in st.session_state:
             st.session_state.review_messages = []
 
         if selected_task:
-            # --- ステップ2：画像のアップロード ---
             st.subheader("2. 処理したいスクリーンショット画像をアップロードしてください")
             uploaded_files = st.file_uploader(
-                "スクリーンショットを選択",
-                accept_multiple_files=True,
-                type=['png', 'jpg', 'jpeg'],
-                key=f"uploader_{selected_task}"
+                "スクリーンショットを選択", accept_multiple_files=True,
+                type=['png', 'jpg', 'jpeg'], key=f"uploader_{selected_task}"
             )
 
-            # --- ステップ3：実行ボタン ---
             st.subheader("3. データ抽出を実行します")
             if st.button(f"「{selected_task}」を実行する", use_container_width=True, type="primary"):
                 st.session_state.review_messages = []
@@ -148,9 +143,8 @@ def run_shiratama_custom(gemini_api_key):
                 genai.configure(api_key=gemini_api_key)
                 gemini_model = genai.GenerativeModel('gemini-1.5-flash-latest')
                 
-                # --- タスクに応じて処理を分岐 ---
                 if selected_task == "⚔️ 遠征データ抽出":
-                    gemini_prompt = "..." # (プロンプト内容は省略)
+                    gemini_prompt = "..." # 省略
                     all_data = extract_data_from_images(uploaded_files, gemini_model, gemini_prompt)
                     unique_data, review_msgs = normalize_names(all_data, member_sheet)
                     st.session_state.review_messages.extend(review_msgs)
@@ -169,7 +163,7 @@ def run_shiratama_custom(gemini_api_key):
                     st.balloons()
                 
                 elif selected_task == "🗺️ 探索結果抽出":
-                    gemini_prompt = "..." # (プロンプト内容は省略)
+                    gemini_prompt = "..." # 省略
                     all_data = extract_data_from_images(uploaded_files, gemini_model, gemini_prompt)
                     unique_data, review_msgs = normalize_names(all_data, member_sheet)
                     st.session_state.review_messages.extend(review_msgs)
@@ -178,7 +172,6 @@ def run_shiratama_custom(gemini_api_key):
                         sheet = spreadsheet.worksheet('探索入力')
                         cell_list = []
                         for i, (name, score) in enumerate(unique_data):
-                            # A列(1)の3行目から名前、B列(2)の3行目からスコアを書き込む
                             cell_list.append(gspread.Cell(3 + i, 1, name))
                             cell_list.append(gspread.Cell(3 + i, 2, score))
                         if cell_list: sheet.update_cells(cell_list, value_input_option='USER_ENTERED')
@@ -186,7 +179,6 @@ def run_shiratama_custom(gemini_api_key):
                     st.success(f"🎉 探索結果抽出完了！ {len(unique_data)}件のデータをスプレッドシートに書き込みました。")
                     st.balloons()
 
-        # --- 処理完了後の共通メッセージ表示 ---
         if st.session_state.review_messages:
             st.divider()
             st.warning("🤖 AIからの、確認依頼があります")
@@ -208,9 +200,7 @@ with st.sidebar:
     default_value = saved_key['value'] if isinstance(saved_key, dict) and 'value' in saved_key else ""
     
     gemini_api_key_input = st.text_input(
-        "Gemini APIキー", 
-        type="password", 
-        value=default_value,
+        "Gemini APIキー", type="password", value=default_value,
         help="白玉さんの、個人のGemini APIキー"
     )
     
