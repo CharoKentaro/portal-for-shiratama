@@ -27,25 +27,45 @@ except (KeyError, FileNotFoundError):
 # --- ③ ローカルストレージの準備 ---
 localS = LocalStorage()
 
+# --- ④ メインの処理を実行する関数 ---
+def run_shiratama_custom(gemini_api_key):
+    try:
+        st.header("✨ まほろば！ ✨")
+        st.info("処理したいスクリーンショット画像を、すべて、ここにアップロードしてください。")
+        uploaded_files = st.file_uploader("スクリーンショットを選択", accept_multiple_files=True, type=['png', 'jpg', 'jpeg'])
 
-# --- A. 画像からデータを抽出する共通関数 ---
-def extract_data_from_images(uploaded_files, gemini_model, gemini_prompt):
-    all_player_data = []
-    max_retries = 3
-    progress_bar = st.progress(0, text="処理を開始します...")
-    
-    for i, uploaded_file in enumerate(uploaded_files):
-        file_name = uploaded_file.name
-        progress_text = f"処理中: {i+1}/{len(uploaded_files)} - {file_name}"
-        progress_bar.progress((i+1)/len(uploaded_files), text=progress_text)
-        
-        with st.spinner(f"🖼️ 画像「{file_name}」を最適化し、🧠 Geminiがデータを抽出中..."):
-            image_bytes = uploaded_file.getvalue()
-            img = Image.open(io.BytesIO(image_bytes))
-            img.thumbnail((512, 512))
+        if "review_messages" not in st.session_state:
+            st.session_state.review_messages = []
+
+        # --- ボタンを2つに分離 ---
+        col1, col2 = st.columns(2)
+
+        # --- ボタン1：遠征データ抽出（元の成功コードがベース） ---
+        if col1.button("⚔️ 遠征データの抽出を実行する", use_container_width=True):
+            st.session_state.review_messages = []
+            if not uploaded_files: st.warning("画像がアップロードされていません。"); st.stop()
+            if not gemini_api_key: st.warning("サイドバーでGemini APIキーを入力し、保存してください。"); st.stop()
             
-            for attempt in range(max_retries):
-                try:
+            gc = gspread.authorize(creds)
+            spreadsheet = gc.open_by_key('1j-A8Hq5sc4_y0E07wNd9814mHmheNAnaU8iZAr3C6xo') # 実験用シートキー
+            sheet = spreadsheet.worksheet('遠征入力')
+            member_sheet = spreadsheet.worksheet('メンバー')
+            
+            genai.configure(api_key=gemini_api_key)
+            gemini_model = genai.GenerativeModel('gemini-1.5-flash-latest')
+            gemini_prompt = "..." # プロンプト省略
+
+            all_player_data = []
+            progress_bar = st.progress(0, text="処理を開始します...")
+            for i, uploaded_file in enumerate(uploaded_files):
+                # (画像抽出処理：成功コードと全く同じ)
+                file_name = uploaded_file.name
+                progress_text = f"処理中: {i+1}/{len(uploaded_files)} - {file_name}"
+                progress_bar.progress((i+1)/len(uploaded_files), text=progress_text)
+                with st.spinner(f"🖼️ 画像「{file_name}」を最適化し、データを抽出中..."):
+                    image_bytes = uploaded_file.getvalue()
+                    img = Image.open(io.BytesIO(image_bytes))
+                    img.thumbnail((512, 512))
                     response = gemini_model.generate_content([gemini_prompt, img], request_options={"timeout": 600})
                     cleaned_lines = response.text.strip().split('\n')
                     for line in cleaned_lines:
@@ -53,140 +73,140 @@ def extract_data_from_images(uploaded_files, gemini_model, gemini_prompt):
                         if len(parts) == 2:
                             name, score = parts[0].strip(), parts[1].strip()
                             if name and score: all_player_data.append([name, score])
-                    break 
-                except Exception as e:
-                    if "429" in str(e) and attempt < max_retries - 1:
-                        wait_time = (2 ** attempt) * 5 + random.uniform(1, 3)
-                        st.warning(f"APIの利用上限を検知。{wait_time:.1f}秒待機して再試行します...")
-                        time.sleep(wait_time)
-                    else:
-                        st.error(f"ファイル「{file_name}」の抽出中にエラー: {e}"); break
-            time.sleep(5)
+                    time.sleep(5)
             
-    progress_bar.empty()
-    return all_player_data
+            with st.spinner("🔄 名前の正規化とデータの最終チェック..."):
+                # (名前の正規化処理：成功コードと全く同じ)
+                correct_names = [name.strip() for name in member_sheet.col_values(1) if name and name.strip()]
+                normalized_player_data = []
+                similarity_threshold = 85
+                if correct_names:
+                    for extracted_name, score in all_player_data:
+                        best_candidate = None
+                        highest_final_score = -1
+                        for candidate_name in correct_names:
+                            similarity = process.fuzz.ratio(extracted_name, candidate_name)
+                            len_diff = abs(len(extracted_name) - len(candidate_name))
+                            penalty = len_diff * 15
+                            final_score = similarity - penalty
+                            if final_score > highest_final_score:
+                                highest_final_score = final_score
+                                best_candidate = (candidate_name, similarity)
+                        if best_candidate:
+                            final_name, final_similarity = best_candidate
+                            if highest_final_score < similarity_threshold:
+                                review_message = f"⚠️ **要確認:** AIは「`{extracted_name}`」と読み取りましたが「**`{final_name}`**」として処理。（総合点: {highest_final_score}点）"
+                                st.session_state.review_messages.append(review_message)
+                            normalized_player_data.append([final_name, score])
+                        else:
+                            review_message = f"🚨 **処理不可:**「`{extracted_name}`」はメンバーリストに見つかりません。"
+                            st.session_state.review_messages.append(review_message)
+                            normalized_player_data.append([f"【要確認】{extracted_name}", score])
+                else:
+                    normalized_player_data = all_player_data
+                seen = set()
+                unique_player_data = [item for item in normalized_player_data if tuple(item) not in seen and not seen.add(tuple(item))]
 
-# --- B. 名前を正規化する共通関数 (元の成功ロジックに修正) ---
-def normalize_names(all_player_data, member_sheet):
-    with st.spinner("🔄 名前の正規化（デュアルスコアVer）とデータの最終チェック..."):
-        correct_names = [name.strip() for name in member_sheet.col_values(1) if name and name.strip()]
-        normalized_player_data = []
-        review_messages = []
-        similarity_threshold = 85
-
-        if not correct_names:
-            return all_player_data, ["⚠️メンバーリストが取得できませんでした。名前の正規化をスキップします。"]
-
-        for extracted_name, score in all_player_data:
-            best_candidate = None
-            highest_final_score = -1
+            with st.spinner("✍️ スプレッドシートに結果を書き込み中..."):
+                # (書き込み処理：成功コードと全く同じ)
+                row3_values = sheet.row_values(3)
+                target_col = len(row3_values) + 1
+                cell_list = []
+                for i, (name, score) in enumerate(unique_player_data):
+                    cell_list.append(gspread.Cell(3 + i, target_col, name))
+                    cell_list.append(gspread.Cell(3 + i, target_col + 1, score))
+                if cell_list: sheet.update_cells(cell_list, value_input_option='USER_ENTERED')
             
-            for candidate_name in correct_names:
-                similarity = process.fuzz.ratio(extracted_name, candidate_name)
-                len_diff = abs(len(extracted_name) - len(candidate_name))
-                penalty = len_diff * 15
-                final_score = similarity - penalty
-                
-                if final_score > highest_final_score:
-                    highest_final_score = final_score
-                    best_candidate = (candidate_name, similarity)
+            progress_bar.empty()
+            st.success(f"🎉 遠征データ抽出完了！ {len(unique_player_data)}件を書き込みました。")
+            st.balloons()
 
-            if best_candidate:
-                final_name, final_similarity = best_candidate
-                # スコアがしきい値を下回った場合のみ、アプリ上で確認メッセージを作成する
-                if highest_final_score < similarity_threshold:
-                    review_message = f"⚠️ **要確認:** AIは「`{extracted_name}`」と読み取りましたが、総合判断の結果「**`{final_name}`**」として処理しました。（総合点: {highest_final_score}点 / 類似度: {final_similarity}点）"
-                    review_messages.append(review_message)
-                
-                # スコアに関わらず、「常に」最も近い候補の名前に正規化してスプレッドシート用のデータを作成
-                normalized_player_data.append([final_name, score])
-            else:
-                # 適切な候補が一つも見つからなかった場合
-                review_message = f"🚨 **処理不可:** AIは「`{extracted_name}`」と読み取りましたが、メンバーリストに一致する候補が見つかりませんでした。手動で確認してください。"
-                review_messages.append(review_message)
-                normalized_player_data.append([f"【要確認】{extracted_name}", score])
-        
-        seen = set()
-        unique_player_data = [item for item in normalized_player_data if tuple(item) not in seen and not seen.add(tuple(item))]
-        return unique_player_data, review_messages
-
-# --- ④ メインの処理を実行する関数 ---
-def run_shiratama_custom(gemini_api_key):
-    try:
-        st.header("✨ まほろば！ ✨")
-        
-        st.subheader("1. 実行したい処理を選択してください")
-        selected_task = st.radio(
-            "処理の選択:", ("⚔️ 遠征データ抽出", "🗺️ 探索結果抽出"),
-            horizontal=True, label_visibility="collapsed"
-        )
-
-        if "review_messages" not in st.session_state:
+        # --- ボタン2：探索結果抽出（成功コードを少しだけ変更） ---
+        if col2.button("🗺️ 探索結果の抽出を実行する", use_container_width=True):
             st.session_state.review_messages = []
+            if not uploaded_files: st.warning("画像がアップロードされていません。"); st.stop()
+            if not gemini_api_key: st.warning("サイドバーでGemini APIキーを入力し、保存してください。"); st.stop()
+            
+            gc = gspread.authorize(creds)
+            spreadsheet = gc.open_by_key('1j-A8Hq5sc4_y0E07wNd9814mHmheNAnaU8iZAr3C6xo') # 実験用シートキー
+            sheet = spreadsheet.worksheet('探索入力') # ★変更点1：シート名
+            member_sheet = spreadsheet.worksheet('メンバー')
+            
+            genai.configure(api_key=gemini_api_key)
+            gemini_model = genai.GenerativeModel('gemini-1.5-flash-latest')
+            gemini_prompt = "..." # プロンプト省略
 
-        if selected_task:
-            st.subheader("2. 処理したいスクリーンショット画像をアップロードしてください")
-            uploaded_files = st.file_uploader(
-                "スクリーンショットを選択", accept_multiple_files=True,
-                type=['png', 'jpg', 'jpeg'], key=f"uploader_{selected_task}"
-            )
+            all_player_data = []
+            progress_bar = st.progress(0, text="処理を開始します...")
+            for i, uploaded_file in enumerate(uploaded_files):
+                # (画像抽出処理：成功コードと全く同じ)
+                file_name = uploaded_file.name
+                progress_text = f"処理中: {i+1}/{len(uploaded_files)} - {file_name}"
+                progress_bar.progress((i+1)/len(uploaded_files), text=progress_text)
+                with st.spinner(f"🖼️ 画像「{file_name}」を最適化し、データを抽出中..."):
+                    image_bytes = uploaded_file.getvalue()
+                    img = Image.open(io.BytesIO(image_bytes))
+                    img.thumbnail((512, 512))
+                    response = gemini_model.generate_content([gemini_prompt, img], request_options={"timeout": 600})
+                    cleaned_lines = response.text.strip().split('\n')
+                    for line in cleaned_lines:
+                        parts = line.split(',')
+                        if len(parts) == 2:
+                            name, score = parts[0].strip(), parts[1].strip()
+                            if name and score: all_player_data.append([name, score])
+                    time.sleep(5)
 
-            st.subheader("3. データ抽出を実行します")
-            if st.button(f"「{selected_task}」を実行する", use_container_width=True, type="primary"):
-                st.session_state.review_messages = []
-                if not uploaded_files: st.warning("画像がアップロードされていません。"); st.stop()
-                if not gemini_api_key: st.warning("サイドバーでGemini APIキーを入力し、保存してください。"); st.stop()
-                
-                gc = gspread.authorize(creds)
-                spreadsheet = gc.open_by_key('1j-A8Hq5sc4_y0E07wNd9814mHmheNAnaU8iZAr3C6xo')
-                member_sheet = spreadsheet.worksheet('メンバー')
-                genai.configure(api_key=gemini_api_key)
-                gemini_model = genai.GenerativeModel('gemini-1.5-flash-latest')
-                
-                if selected_task == "⚔️ 遠征データ抽出":
-                    gemini_prompt = "..." # 省略
-                    all_data = extract_data_from_images(uploaded_files, gemini_model, gemini_prompt)
-                    unique_data, review_msgs = normalize_names(all_data, member_sheet)
-                    st.session_state.review_messages.extend(review_msgs)
-                    
-                    with st.spinner("✍️ スプレッドシートに結果を書き込み中..."):
-                        sheet = spreadsheet.worksheet('遠征入力')
-                        row3_values = sheet.row_values(3)
-                        target_col = len(row3_values) + 1
-                        cell_list = []
-                        for i, (name, score) in enumerate(unique_data):
-                            cell_list.append(gspread.Cell(3 + i, target_col, name))
-                            cell_list.append(gspread.Cell(3 + i, target_col + 1, score))
-                        if cell_list: sheet.update_cells(cell_list, value_input_option='USER_ENTERED')
-                    
-                    st.success(f"🎉 遠征データ抽出完了！ {len(unique_data)}件のデータをスプレッドシートに書き込みました。")
-                    st.balloons()
-                
-                elif selected_task == "🗺️ 探索結果抽出":
-                    gemini_prompt = "..." # 省略
-                    all_data = extract_data_from_images(uploaded_files, gemini_model, gemini_prompt)
-                    unique_data, review_msgs = normalize_names(all_data, member_sheet)
-                    st.session_state.review_messages.extend(review_msgs)
+            with st.spinner("🔄 名前の正規化とデータの最終チェック..."):
+                # (名前の正規化処理：成功コードと全く同じ)
+                correct_names = [name.strip() for name in member_sheet.col_values(1) if name and name.strip()]
+                normalized_player_data = []
+                similarity_threshold = 85
+                if correct_names:
+                    for extracted_name, score in all_player_data:
+                        best_candidate = None
+                        highest_final_score = -1
+                        for candidate_name in correct_names:
+                            similarity = process.fuzz.ratio(extracted_name, candidate_name)
+                            len_diff = abs(len(extracted_name) - len(candidate_name))
+                            penalty = len_diff * 15
+                            final_score = similarity - penalty
+                            if final_score > highest_final_score:
+                                highest_final_score = final_score
+                                best_candidate = (candidate_name, similarity)
+                        if best_candidate:
+                            final_name, final_similarity = best_candidate
+                            if highest_final_score < similarity_threshold:
+                                review_message = f"⚠️ **要確認:** AIは「`{extracted_name}`」と読み取りましたが「**`{final_name}`**」として処理。（総合点: {highest_final_score}点）"
+                                st.session_state.review_messages.append(review_message)
+                            normalized_player_data.append([final_name, score])
+                        else:
+                            review_message = f"🚨 **処理不可:**「`{extracted_name}`」はメンバーリストに見つかりません。"
+                            st.session_state.review_messages.append(review_message)
+                            normalized_player_data.append([f"【要確認】{extracted_name}", score])
+                else:
+                    normalized_player_data = all_player_data
+                seen = set()
+                unique_player_data = [item for item in normalized_player_data if tuple(item) not in seen and not seen.add(tuple(item))]
 
-                    with st.spinner("✍️ スプレッドシートに結果を書き込み中..."):
-                        sheet = spreadsheet.worksheet('探索入力')
-                        cell_list = []
-                        for i, (name, score) in enumerate(unique_data):
-                            cell_list.append(gspread.Cell(3 + i, 1, name))
-                            cell_list.append(gspread.Cell(3 + i, 2, score))
-                        if cell_list: sheet.update_cells(cell_list, value_input_option='USER_ENTERED')
-                    
-                    st.success(f"🎉 探索結果抽出完了！ {len(unique_data)}件のデータをスプレッドシートに書き込みました。")
-                    st.balloons()
+            with st.spinner("✍️ スプレッドシートに結果を書き込み中..."):
+                # ★変更点2：書き込みロジック
+                cell_list = []
+                for i, (name, score) in enumerate(unique_player_data):
+                    cell_list.append(gspread.Cell(3 + i, 1, name))  # A列
+                    cell_list.append(gspread.Cell(3 + i, 2, score)) # B列
+                if cell_list: sheet.update_cells(cell_list, value_input_option='USER_ENTERED')
 
+            progress_bar.empty()
+            st.success(f"🎉 探索結果抽出完了！ {len(unique_player_data)}件を書き込みました。")
+            st.balloons()
+        
+        # --- 確認依頼メッセージの表示エリア（共通） ---
         if st.session_state.review_messages:
             st.divider()
             st.warning("🤖 AIからの、確認依頼があります")
             for msg in st.session_state.review_messages:
                 st.markdown(msg)
 
-    except gspread.exceptions.WorksheetNotFound as e:
-        st.error(f"🚨 重大なエラー：ワークシートが見つかりません。シート名を確認してください: {e}")
     except Exception as e:
         st.error(f"❌ ミッションの途中で予期せぬエラーが発生しました: {e}")
 
@@ -200,7 +220,9 @@ with st.sidebar:
     default_value = saved_key['value'] if isinstance(saved_key, dict) and 'value' in saved_key else ""
     
     gemini_api_key_input = st.text_input(
-        "Gemini APIキー", type="password", value=default_value,
+        "Gemini APIキー", 
+        type="password", 
+        value=default_value,
         help="白玉さんの、個人のGemini APIキー"
     )
     
