@@ -154,7 +154,7 @@ def run_shiratama_custom(gemini_api_key):
                 
                 # GeminiとGoogle Sheetsの準備
                 gc = gspread.authorize(creds)
-                spreadsheet = gc.open_by_key('1EOJp_J3yPi9Yp6WqabJ_pdJUeIkGKCN9d-xae5Mf7PY')
+                spreadsheet = gc.open_by_key('1j-A8Hq5sc4_y0E07wNd9814mHmheNAnaU8iZAr3C6xo')
                 member_sheet = spreadsheet.worksheet('メンバー')
                 genai.configure(api_key=gemini_api_key)
                 gemini_model = genai.GenerativeModel('gemini-1.5-flash-latest')
