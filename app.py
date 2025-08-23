@@ -108,16 +108,6 @@ def normalize_names(all_player_data, member_sheet):
         unique_player_data = [item for item in normalized_player_data if tuple(item) not in seen and not seen.add(tuple(item))]
         return unique_player_data, review_messages
 
-# --- C. スプレッドシートに書き込む共通関数 ---
-def write_data_to_sheet(sheet, data, start_row, name_col, score_col):
-    with st.spinner("✍️ スプレッドシートに結果を書き込み中..."):
-        cell_list = []
-        for i, (name, score) in enumerate(data):
-            cell_list.append(gspread.Cell(start_row + i, name_col, name))
-            cell_list.append(gspread.Cell(start_row + i, score_col, score))
-        if cell_list:
-            sheet.update_cells(cell_list, value_input_option='USER_ENTERED')
-
 # --- ④ メインの処理を実行する関数 ---
 def run_shiratama_custom(gemini_api_key):
     try:
@@ -142,7 +132,7 @@ def run_shiratama_custom(gemini_api_key):
                 "スクリーンショットを選択",
                 accept_multiple_files=True,
                 type=['png', 'jpg', 'jpeg'],
-                key=f"uploader_{selected_task}" # 選択に応じてキーを変更
+                key=f"uploader_{selected_task}"
             )
 
             # --- ステップ3：実行ボタン ---
@@ -152,50 +142,46 @@ def run_shiratama_custom(gemini_api_key):
                 if not uploaded_files: st.warning("画像がアップロードされていません。"); st.stop()
                 if not gemini_api_key: st.warning("サイドバーでGemini APIキーを入力し、保存してください。"); st.stop()
                 
-                # GeminiとGoogle Sheetsの準備
                 gc = gspread.authorize(creds)
                 spreadsheet = gc.open_by_key('1j-A8Hq5sc4_y0E07wNd9814mHmheNAnaU8iZAr3C6xo')
                 member_sheet = spreadsheet.worksheet('メンバー')
                 genai.configure(api_key=gemini_api_key)
                 gemini_model = genai.GenerativeModel('gemini-1.5-flash-latest')
                 
-                # 選択されたタスクに応じて処理を分岐
+                # --- タスクに応じて処理を分岐 ---
                 if selected_task == "⚔️ 遠征データ抽出":
-                    gemini_prompt = """
-                    あなたは、与えられたゲームのスクリーンショット画像を直接解析する、超高精度のデータ抽出AIです。
-                    あなたの使命は、画像の中から「プレイヤー名」と「スコア」のペアだけを完璧に抽出し、指定された形式で出力することです。
-                    #厳格なルール
-                    (以下、プロンプト内容は既存のものと同じなので省略)
-                    """
-                    # ステップ実行
+                    gemini_prompt = "..." # (プロンプト内容は省略)
                     all_data = extract_data_from_images(uploaded_files, gemini_model, gemini_prompt)
                     unique_data, review_msgs = normalize_names(all_data, member_sheet)
                     st.session_state.review_messages.extend(review_msgs)
                     
-                    # 「遠征入力」シートの書き込み位置を計算
-                    sheet_to_write = spreadsheet.worksheet('遠征入力')
-                    row3_values = sheet_to_write.row_values(3)
-                    target_col = len(row3_values) + 1
-                    write_data_to_sheet(sheet_to_write, unique_data, start_row=3, name_col=target_col, score_col=target_col + 1)
+                    with st.spinner("✍️ スプレッドシートに結果を書き込み中..."):
+                        sheet = spreadsheet.worksheet('遠征入力')
+                        row3_values = sheet.row_values(3)
+                        target_col = len(row3_values) + 1
+                        cell_list = []
+                        for i, (name, score) in enumerate(unique_data):
+                            cell_list.append(gspread.Cell(3 + i, target_col, name))
+                            cell_list.append(gspread.Cell(3 + i, target_col + 1, score))
+                        if cell_list: sheet.update_cells(cell_list, value_input_option='USER_ENTERED')
                     
                     st.success(f"🎉 遠征データ抽出完了！ {len(unique_data)}件のデータをスプレッドシートに書き込みました。")
                     st.balloons()
                 
                 elif selected_task == "🗺️ 探索結果抽出":
-                    gemini_prompt = """
-                    あなたは、与えられたゲームのスクリーンショット画像を直接解析する、超高精度のデータ抽出AIです。
-                    あなたの使命は、画像の中から「キャラクター名」と「スコア」のペアだけを完璧に抽出し、指定された形式で出力することです。
-                    #厳格なルール
-                    (以下、プロンプト内容は既存のものとほぼ同じ。「プレイヤー名」を「キャラクター名」に変更)
-                    """
-                    # ステップ実行
+                    gemini_prompt = "..." # (プロンプト内容は省略)
                     all_data = extract_data_from_images(uploaded_files, gemini_model, gemini_prompt)
                     unique_data, review_msgs = normalize_names(all_data, member_sheet)
                     st.session_state.review_messages.extend(review_msgs)
 
-                    # 「探索入力」シートのA3, B3から書き込み
-                    sheet_to_write = spreadsheet.worksheet('探索入力')
-                    write_data_to_sheet(sheet_to_write, unique_data, start_row=3, name_col=1, score_col=2)
+                    with st.spinner("✍️ スプレッドシートに結果を書き込み中..."):
+                        sheet = spreadsheet.worksheet('探索入力')
+                        cell_list = []
+                        for i, (name, score) in enumerate(unique_data):
+                            # A列(1)の3行目から名前、B列(2)の3行目からスコアを書き込む
+                            cell_list.append(gspread.Cell(3 + i, 1, name))
+                            cell_list.append(gspread.Cell(3 + i, 2, score))
+                        if cell_list: sheet.update_cells(cell_list, value_input_option='USER_ENTERED')
                     
                     st.success(f"🎉 探索結果抽出完了！ {len(unique_data)}件のデータをスプレッドシートに書き込みました。")
                     st.balloons()
@@ -208,7 +194,7 @@ def run_shiratama_custom(gemini_api_key):
                 st.markdown(msg)
 
     except gspread.exceptions.WorksheetNotFound as e:
-        st.error(f"🚨 重大なエラー：指定されたワークシートが見つかりません。シート名を確認してください: {e}")
+        st.error(f"🚨 重大なエラー：ワークシートが見つかりません。シート名を確認してください: {e}")
     except Exception as e:
         st.error(f"❌ ミッションの途中で予期せぬエラーが発生しました: {e}")
 
