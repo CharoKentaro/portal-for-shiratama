@@ -1,11 +1,9 @@
 streamlit
 gspread
-google-generativeai
+Pillow
+streamlit-local-storage
+google-generativeai>=0.5.0
 google-api-python-client
 google-auth-oauthlib
 google-auth-httplib2
-Pillow
-thefuzz
-python-Levenshtein
-streamlit-local-storage
-google-generativeai>=0.5.0
+thefuzz[speed]
