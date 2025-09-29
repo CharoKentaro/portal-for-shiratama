@@ -11,6 +11,11 @@ import random
 import time
 from streamlit_local_storage import LocalStorage
 
+# --- アプリの最上部あたりに追加 ---
+st.write(f"現在のgoogle-generativeaiライブラリのバージョン: {genai.__version__}")
+
+
+
 # --- ① アプリの基本設定 ---
 st.set_page_config(page_title="白玉さん専用AIアシスタント", page_icon="⚔️", layout="wide")
 
