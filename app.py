@@ -15,6 +15,28 @@ from streamlit_local_storage import LocalStorage
 st.write(f"現在のgoogle-generativeaiライブラリのバージョン: {genai.__version__}")
 
 
+# --- ↓ ここから新しいデバッグコードを追加してください ↓ ---
+try:
+    st.subheader("現在利用可能なモデルのリスト:")
+    models_list = []
+    # 'generateContent' をサポートするモデルのみをリストアップ
+    for m in genai.list_models():
+        if 'generateContent' in m.supported_generation_methods:
+            models_list.append(m.name)
+    
+    # 見やすく箇条書きで表示
+    st.write(models_list)
+    
+    # 今回使いたいモデルが含まれているかチェック
+    if 'models/gemini-1.5-flash-latest' in models_list:
+        st.success("✅ 'gemini-1.5-flash-latest' は利用可能なモデルリストに含まれています。")
+    else:
+        st.error("❌ 'gemini-1.5-flash-latest' は利用可能なモデルリストに含まれていません。")
+
+except Exception as e:
+    st.error(f"モデルリストの取得中にエラーが発生しました: {e}")
+# --- ↑ ここまでデバッグコードを追加してください ↑ ---
+
 
 # --- ① アプリの基本設定 ---
 st.set_page_config(page_title="白玉さん専用AIアシスタント", page_icon="⚔️", layout="wide")
