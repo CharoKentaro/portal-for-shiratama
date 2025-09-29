@@ -55,11 +55,11 @@ def run_shiratama_custom(gemini_api_key):
             if not gemini_api_key: st.warning("サイドバーでGemini APIキーを入力し、保存してください。"); st.stop()
             
             gc = gspread.authorize(creds)
-            spreadsheet = gc.open_by_key('1EOJp_J3yPi9Yp6WqabJ_pdJUeIkGKCN9d-xae5Mf7PY')
+            spreadsheet = gc.open_by_key('1j-A8Hq5sc4_y0E07wNd9814mHmheNAnaU8iZAr3C6xo')
             member_sheet = spreadsheet.worksheet('メンバー')
             
             genai.configure(api_key=gemini_api_key)
-            gemini_model = genai.GenerativeModel('gemini-1.5-flash-latest')
+            gemini_model = genai.GenerativeModel('gemini-1.5-flash')
             gemini_prompt = """
             あなたは、与えられたゲームのスクリーンショット画像を直接解析する、超高精度のデータ抽出AIです。
             あなたの使命は、画像の中から「プレイヤー名」と「スコア」のペアだけを完璧に抽出し、指定された形式で出力することです。
