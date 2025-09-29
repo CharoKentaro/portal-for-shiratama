@@ -59,7 +59,7 @@ def run_shiratama_custom(gemini_api_key):
             member_sheet = spreadsheet.worksheet('メンバー')
             
             genai.configure(api_key=gemini_api_key)
-            gemini_model = genai.GenerativeModel('gemini-pro-vision')
+            gemini_model = genai.GenerativeModel('gemini-1.5-flash-latest')
             gemini_prompt = """
             あなたは、与えられたゲームのスクリーンショット画像を直接解析する、超高精度のデータ抽出AIです。
             あなたの使命は、画像の中から「プレイヤー名」と「スコア」のペアだけを完璧に抽出し、指定された形式で出力することです。
